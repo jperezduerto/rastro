@@ -19,3 +19,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["rastro"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"rastro/rules/services.yaml" = "rastro/rules/services.yaml"
+"rastro/rules/tools.yaml" = "rastro/rules/tools.yaml"

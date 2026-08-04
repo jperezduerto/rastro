@@ -1,0 +1,26 @@
+# tool -> package per manager. rastro installs missing tools automatically.
+# `required: true` means a missing tool is a hard stop (exit 1).
+nmap:
+  binaries: [nmap]
+  required: true
+  packages: {apt: nmap, dnf: nmap, pacman: nmap, brew: nmap}
+rustscan:
+  binaries: [rustscan]
+  required: false
+  packages: {brew: rustscan}
+curl:
+  binaries: [curl]
+  required: false
+  packages: {apt: curl, dnf: curl, pacman: curl, brew: curl}
+gobuster:
+  binaries: [gobuster]
+  required: false
+  packages: {apt: gobuster, dnf: gobuster, pacman: gobuster, brew: gobuster}
+netexec:
+  binaries: [nxc, netexec]
+  required: false
+  packages: {apt: netexec}
+enum4linux-ng:
+  binaries: [enum4linux-ng]
+  required: false
+  packages: {apt: enum4linux-ng}

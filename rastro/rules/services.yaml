@@ -1,0 +1,154 @@
+# rastro service inventory. Pure data: add a service here, not in Python.
+# `requires_confidence` is a MINIMUM on the guess < banner < confirmed scale.
+version: 1
+services:
+  http:
+    ports: [80, 443, 8000, 8008, 8080, 8081, 8088, 8443, 8888]
+    detect:
+      nse: "http-title,http-headers,http-methods,http-robots.txt,http-server-header"
+    enum:
+      - id: http-headers
+        tool: curl
+        command: "curl -sSik --max-time 15 http://{target}:{port}/"
+        timeout: 30
+        requires_confidence: guess
+      - id: http-dirs
+        tool: gobuster
+        command: "gobuster dir -q -u http://{target}:{port}/ -w /usr/share/wordlists/dirb/common.txt -t 20"
+        timeout: 300
+        requires_confidence: confirmed
+  smb:
+    ports: [139, 445]
+    detect:
+      nse: "smb-os-discovery,smb-security-mode,smb2-security-mode,smb-vuln-ms17-010"
+    enum:
+      - id: smb-shares
+        tool: netexec
+        command: "nxc smb {target} -u '' -p '' --shares"
+        timeout: 60
+        requires_confidence: guess
+      - id: smb-users
+        tool: enum4linux-ng
+        command: "enum4linux-ng -A {target}"
+        timeout: 180
+        requires_confidence: confirmed
+  ftp:
+    ports: [21]
+    detect:
+      nse: "ftp-anon,ftp-syst"
+    enum:
+      - id: ftp-anon
+        tool: nmap
+        command: "nmap -Pn -p{port} --script ftp-anon --host-timeout 60s {target}"
+        timeout: 90
+        requires_confidence: guess
+  ssh:
+    ports: [22]
+    detect:
+      nse: "ssh2-enum-algos,ssh-auth-methods,ssh-hostkey"
+    enum:
+      - id: ssh-algos
+        tool: nmap
+        command: "nmap -Pn -p{port} --script ssh2-enum-algos,ssh-auth-methods --host-timeout 60s {target}"
+        timeout: 90
+        requires_confidence: guess
+  ldap:
+    ports: [389, 636, 3268, 3269]
+    detect:
+      nse: "ldap-rootdse"
+    enum:
+      - id: ldap-rootdse
+        tool: nmap
+        command: "nmap -Pn -p{port} --script ldap-rootdse --host-timeout 60s {target}"
+        timeout: 90
+        requires_confidence: guess
+  dns:
+    ports: [53]
+    detect:
+      nse: "dns-nsid,dns-recursion"
+    enum:
+      - id: dns-nsid
+        tool: nmap
+        command: "nmap -Pn -sU -p{port} --script dns-nsid,dns-recursion --host-timeout 60s {target}"
+        timeout: 90
+        requires_confidence: guess
+  smtp:
+    ports: [25, 465, 587]
+    detect:
+      nse: "smtp-commands,smtp-open-relay,smtp-enum-users"
+    enum:
+      - id: smtp-commands
+        tool: nmap
+        command: "nmap -Pn -p{port} --script smtp-commands,smtp-open-relay --host-timeout 60s {target}"
+        timeout: 90
+        requires_confidence: guess
+  mysql:
+    ports: [3306]
+    detect:
+      nse: "mysql-info,mysql-empty-password"
+    enum:
+      - id: mysql-info
+        tool: nmap
+        command: "nmap -Pn -p{port} --script mysql-info,mysql-empty-password --host-timeout 60s {target}"
+        timeout: 90
+        requires_confidence: guess
+  mssql:
+    ports: [1433]
+    detect:
+      nse: "ms-sql-info,ms-sql-ntlm-info"
+    enum:
+      - id: mssql-info
+        tool: nmap
+        command: "nmap -Pn -p{port} --script ms-sql-info,ms-sql-ntlm-info --host-timeout 60s {target}"
+        timeout: 90
+        requires_confidence: guess
+  rdp:
+    ports: [3389]
+    detect:
+      nse: "rdp-ntlm-info,rdp-enum-encryption"
+    enum:
+      - id: rdp-ntlm-info
+        tool: nmap
+        command: "nmap -Pn -p{port} --script rdp-ntlm-info --host-timeout 60s {target}"
+        timeout: 90
+        requires_confidence: guess
+  snmp:
+    ports: [161]
+    detect:
+      nse: "snmp-info,snmp-sysdescr"
+    enum:
+      - id: snmp-info
+        tool: nmap
+        command: "nmap -Pn -sU -p{port} --script snmp-info,snmp-sysdescr --host-timeout 60s {target}"
+        timeout: 90
+        requires_confidence: guess
+  nfs:
+    ports: [2049]
+    detect:
+      nse: "nfs-showmount,nfs-ls"
+    enum:
+      - id: nfs-showmount
+        tool: nmap
+        command: "nmap -Pn -p{port} --script nfs-showmount --host-timeout 60s {target}"
+        timeout: 90
+        requires_confidence: guess
+  winrm:
+    ports: [5985, 5986]
+    detect:
+      nse: "http-title"
+    enum:
+      - id: winrm-probe
+        tool: nmap
+        command: "nmap -Pn -p{port} --script http-title --host-timeout 60s {target}"
+        timeout: 90
+        requires_confidence: guess
+  mongodb:
+    ports: [27017]
+    detect:
+      nse: "mongodb-info,mongodb-databases"
+    enum:
+      - id: mongodb-info
+        tool: nmap
+        command: "nmap -Pn -p{port} --script mongodb-info,mongodb-databases --host-timeout 60s {target}"
+        timeout: 90
+        requires_confidence: guess
