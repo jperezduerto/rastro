@@ -50,6 +50,7 @@ class Finding:
     interest: str = "info"
     evidence: str = ""
     source_artifact: str = ""
+    port: int = 0
 
 
 @dataclass
