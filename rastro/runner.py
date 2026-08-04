@@ -7,6 +7,7 @@ result references the file instead of embedding it.
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import time
@@ -63,9 +64,27 @@ def run_command(
     body = stdout
     if stderr:
         body = f"{body}\n--- stderr ---\n{stderr}"
-    # 0600: recon output routinely contains scraped credentials.
-    target_file.write_text(body)
-    target_file.chmod(0o600)
+
+    try:
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        # 0600 set at creation (not chmod'd after): recon output routinely
+        # contains scraped credentials, so it must never exist world/group
+        # readable, even for the instant between create and chmod.
+        fd = os.open(target_file, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(body)
+    except OSError as exc:
+        # Never raise: a write failure is a recorded outcome like any other.
+        return Artifact(
+            tool=tool,
+            command=command,
+            exit_code=exit_code if exit_code != 0 else 1,
+            duration_s=round(duration, 3),
+            timed_out=timed_out,
+            stdout_path="",
+            slug_source=slug,
+            parsed={"error": f"failed to write output: {exc}"},
+        )
 
     return Artifact(
         tool=tool,
@@ -86,7 +105,7 @@ def run_many(
         return []
     workers = max(1, min(max_parallel, len(specs)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [
+        future_to_spec = {
             pool.submit(
                 run_command,
                 spec.command,
@@ -94,7 +113,21 @@ def run_many(
                 timeout=spec.timeout,
                 output_dir=output_dir,
                 slug=spec.slug,
-            )
+            ): spec
             for spec in specs
-        ]
-        return [future.result() for future in futures]
+        }
+        results = []
+        for future, spec in future_to_spec.items():
+            try:
+                results.append(future.result())
+            except Exception as exc:  # belt-and-suspenders: run_command itself never raises
+                results.append(
+                    Artifact(
+                        tool=spec.tool,
+                        command=spec.command,
+                        exit_code=1,
+                        slug_source=spec.slug,
+                        parsed={"error": f"unhandled failure: {exc}"},
+                    )
+                )
+        return results

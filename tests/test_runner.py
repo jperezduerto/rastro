@@ -1,6 +1,8 @@
 # tests/test_runner.py
+import os
 from pathlib import Path
 
+from rastro import runner
 from rastro.runner import CommandSpec, run_command, run_many
 
 
@@ -51,3 +53,32 @@ def test_run_many_isolates_failures(tmp_path: Path):
     arts = {a.slug_source: a for a in run_many(specs, max_parallel=2, output_dir=tmp_path)}
     assert arts["good"].exit_code == 0
     assert arts["bad"].exit_code == 9
+
+
+def test_run_command_write_failure_returns_artifact_not_raise(tmp_path: Path, monkeypatch):
+    def boom(*args, **kwargs):
+        raise OSError("simulated disk full")
+
+    monkeypatch.setattr(runner.os, "open", boom)
+    art = run_command("echo hi", tool="echo", timeout=5, output_dir=tmp_path, slug="x")
+    assert art.exit_code != 0
+    assert art.timed_out is False
+    assert art.stdout_path == ""
+
+
+def test_run_many_isolates_write_failure(tmp_path: Path, monkeypatch):
+    real_open = os.open
+
+    def flaky_open(path, *args, **kwargs):
+        if "bad" in str(path):
+            raise OSError("simulated write failure")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(runner.os, "open", flaky_open)
+    specs = [
+        CommandSpec(command="echo ok", tool="echo", timeout=5, slug="good"),
+        CommandSpec(command="echo bad", tool="echo", timeout=5, slug="bad"),
+    ]
+    arts = {a.slug_source: a for a in run_many(specs, max_parallel=2, output_dir=tmp_path)}
+    assert arts["good"].exit_code == 0
+    assert arts["bad"].exit_code != 0
