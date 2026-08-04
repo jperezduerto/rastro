@@ -1,0 +1,12 @@
+.git/
+.venv/
+tests/
+docs/
+skills/
+dist/
+build/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+rastro-*/
+uv.lock
