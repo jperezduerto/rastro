@@ -71,8 +71,123 @@ sudo rastro 10.0.0.5
 ```
 
 rastro prints the output directory as its first line, then a live view of
-each stage, then exits. Open `report.md` in that directory for a human
-summary, or `result.json` for the structured data.
+each stage, then exits:
+
+```
+/home/you/rastro-10.0.0.5-20260804-194101
+stage: discover
+stage: identify
+stage: enumerate
+stage: classify
+```
+
+Everything lands in that directory:
+
+```
+rastro-10.0.0.5-20260804-194101/
+├── report.md      # read this first
+├── result.json    # the same data, structured
+└── raw/           # every tool's unmodified output
+```
+
+## Using it
+
+### Look before you scan
+
+`--dry-run` shows the sweep command without sending a packet or writing
+anything. Use it when the target is unfamiliar, or to check a rules change:
+
+```bash
+sudo rastro 10.0.0.5 --dry-run
+```
+
+Per-service enumeration commands cannot be shown in advance, because which
+ones apply depends on which ports turn out to be open.
+
+### Reading the results
+
+Open `report.md` and read it in this order:
+
+1. **Findings** — what rastro thinks is wrong. Each one names the exact
+   artifact under `raw/` that produced it, so you can verify the claim rather
+   than trusting it.
+2. **Not run** — what rastro *didn't* do. Read this before concluding a host
+   is clean; a missing tool or an unmatched service looks identical to "no
+   problems found" if you skip it.
+3. **Run commands** — every command with its exit code. If a failure banner
+   is present, treat the findings list as incomplete.
+4. **Open ports** — the inventory, with how confident rastro is about each
+   service.
+
+Then open the specific file under `raw/` that a finding points at. That
+directory can hold megabytes; there is rarely a reason to read all of it.
+
+### "Why didn't gobuster run?"
+
+Expensive or noisy enumeration is gated on confidence. A port whose service
+was inferred only from its port number is a `guess`; one that `nmap -sV`
+positively identified is `confirmed`. Rules declare a minimum:
+
+```yaml
+      - id: http-dirs
+        requires_confidence: confirmed     # never fires on a bare guess
+```
+
+If a step you expected didn't happen, it will be in **Not run** with the
+reason and the exact command it would have run. Nothing is dropped silently.
+
+### Common tasks
+
+```bash
+# Keep results somewhere specific
+sudo rastro 10.0.0.5 --output /engagements/acme/host-5
+
+# Pipe structured output straight into jq (progress goes to stderr, so
+# stdout stays clean)
+sudo rastro 10.0.0.5 --json --quiet | jq '.findings[]'
+
+# Use your own rules instead of the shipped ones
+sudo rastro 10.0.0.5 --rules ./my-services.yaml
+
+# Don't touch the package manager; report anything missing instead
+sudo rastro 10.0.0.5 --no-install
+
+# Machine-readable description of result.json
+rastro schema
+```
+
+### Adding a service
+
+Services and their enumeration steps are data, not code. To teach rastro a
+new one, add a block to `services.yaml` — no Python required:
+
+```yaml
+  redis:
+    ports: [6379]
+    detect:
+      nse: "redis-info"
+    enum:
+      - id: redis-info
+        tool: nmap
+        command: "nmap -Pn -p{port} --script redis-info {target}"
+        timeout: 60
+        requires_confidence: guess
+```
+
+See [`docs/rules.md`](docs/rules.md) for the full schema, the placeholders
+available, and how `--rules` overrides work.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `rastro must run as root` | Expected. Run `sudo rastro <target>` — rastro will not re-execute itself elevated. |
+| `error: externally-managed-environment` on install | PEP 668 (Debian, Ubuntu, Kali). Install into a virtualenv, as shown above. |
+| Exit code `3` and a failure banner | One or more tools exited non-zero. Check the **Run commands** table for which, then read its file under `raw/`. The results are still valid, just incomplete. |
+| Findings list is empty | Check **Not run** first. An empty findings list with skipped steps means gaps in coverage, not a clean host. |
+| Only common ports were scanned | `rustscan` isn't installed, so the nmap fallback ran, and it sweeps a fixed common-port list rather than all 65535. Install rustscan for a full sweep. |
+| Output is owned by `root` | Only happens under a real root login (no `sudo`), where there is no invoking user to hand ownership back to. |
+| A service on a non-standard port isn't enumerated | rastro names services from nmap's service column, so this usually works. If the service has no rules entry it will say so in **Not run** — add one (see above). |
 
 ## Why root
 
@@ -108,11 +223,18 @@ rastro runs a five-stage pipeline, then renders the result:
 
 1. **discover** — a fast port sweep (rustscan if present, nmap otherwise)
    finds open ports.
-2. **identify** — nmap service/version detection maps each open port to a
-   candidate service and a confidence level: `guess` (port number only) or
-   `confirmed` (nmap positively identified the service). A third level,
-   `banner`, sits between them in the ordering but is **reserved** — the
-   current `identify` stage never produces it (see
+2. **identify** — three passes. First a cheap port-number guess, so every port
+   has a name even if the network is unhelpful. Then `nmap -sV`, which upgrades
+   matched ports to `confirmed` and records product and version — this is also
+   what recognises a service on a *non-standard* port (SSH on 10022 is named
+   from nmap's own service column, not from the port number). Finally, each
+   service's `detect.nse` bundle runs against its port; this is where most
+   findings actually come from, since a plain `-sV` reports versions but never
+   the vulnerability signal.
+
+   Confidence is `guess` (port number only) or `confirmed` (nmap positively
+   identified it). A third level, `banner`, sits between them in the ordering
+   but is **reserved** — the current `identify` stage never produces it (see
    [`docs/rules.md`](docs/rules.md)).
 3. **plan** — for each identified service, the YAML rules (see
    [`docs/rules.md`](docs/rules.md)) are consulted to decide which
@@ -122,61 +244,85 @@ rastro runs a five-stage pipeline, then renders the result:
    that would have run.
 4. **enumerate** — the planned commands run concurrently, each tool's raw
    output captured to a file under `raw/`.
-5. **classify** — enumeration output is parsed into `findings`, evidenced by
-   the specific artifact that produced them, and ports are grouped into
-   `buckets` (e.g. `web`, `windows`) for the report.
+5. **classify** — enumeration output is parsed into `findings`, each evidenced
+   by the specific artifact that produced it, and ports are grouped into
+   `buckets`: `web`, `ad`, `rpc`, `winrm`, or `other`. (WinRM and MSRPC both
+   speak HTTP and are deliberately classified *before* `web`, so directory
+   brute-forcing is never pointed at a Windows management endpoint.)
 
 The result is written to a fresh output directory (see
 [`docs/output.md`](docs/output.md) for the full layout and schema).
 
 ## Sample `report.md`
 
+Real output, lightly trimmed, from a host running vsftpd, nginx and Samba:
+
 ```markdown
 # rastro — 10.0.0.5
 
 - **Target:** 10.0.0.5
 - **Resolved:** 10.0.0.5
-- **Started:** 2026-08-04T14:02:11+00:00
-- **Finished:** 2026-08-04T14:03:47+00:00
+- **Started:** 2026-08-04T19:41:01+00:00
+- **Finished:** 2026-08-04T19:43:12+00:00
 
 ## Surfaces
 
-- **web:** 80, 443
+- **other:** 21, 445
+- **web:** 80, 8888
 
 ## Open ports
 
 | Port | Service | Product | Confidence |
 |---|---|---|---|
-| 22 | ssh | OpenSSH 9.6 | confirmed |
+| 21 | ftp | vsftpd | confirmed |
 | 80 | http | nginx | confirmed |
-| 445 | smb | Samba 4.17 | confirmed |
+| 445 | smb | Samba smbd | confirmed |
+| 8082 | unknown | - | confirmed |
+| 8888 | http | Werkzeug httpd | confirmed |
 
 ## Run commands
 
 | Tool | Command | Exit | Output |
 |---|---|---|---|
-| nmap | `nmap -Pn -sS -T4 ... 10.0.0.5` | 0 | `raw/discover.txt` |
-| nmap | `nmap -Pn -sV ... 10.0.0.5` | 0 | `raw/identify.txt` |
+| rustscan | `rustscan -a 10.0.0.5 -g --ulimit 5000` | 0 | `raw/discover.txt` |
+| nmap | `nmap -Pn -sV --host-timeout 300s -p21,80,445,8082,8888 10.0.0.5` | 0 | `raw/identify.txt` |
+| nmap | `nmap -Pn --host-timeout 120s -p445 --script smb-os-discovery,... 10.0.0.5` | 0 | `raw/445-nse.txt` |
+| curl | `curl -sSik --max-time 15 http://10.0.0.5:80/` | 0 | `raw/80-http-headers.txt` |
+| gobuster | `gobuster dir -q -k -u http://10.0.0.5:80/ -w ...` | 0 | `raw/80-http-dirs.txt` |
+| netexec | `nxc smb 10.0.0.5 -u '' -p '' --shares` | 1 | `raw/445-smb-shares.txt` |
+
+**1 command(s) failed.** A short findings list may reflect those failures
+rather than a clean host.
 
 ## Findings
 
 ### SMB signing not required
 
 - **Interest:** high
-- **Evidence:** `message signing enabled but not required`
-- **Source:** `raw/445-smb-shares.txt`
+- **Evidence:** `Message signing enabled but not required`
+- **Source:** `raw/445-nse.txt`
 
 ## Not run
 
 | Tool | Reason | Would have run |
 |---|---|---|
-| gobuster | not installed | `gobuster dir -q -k -u http://10.0.0.5:80/ ...` |
+| - | port 8082: no enumeration rules for service 'unknown' | `-` |
 ```
 
-The **Run commands** section lists every run-level command (the sweep and the
-version probe) with its exit code and raw-output path. It is what
-distinguishes a genuinely clean host from a sweep that failed or found
-nothing — with `-Pn`, nmap exits `0` against a dead host too.
+Three things in that report are worth pointing out, because they are the
+reason it looks the way it does:
+
+- **Run commands** lists *every* command rastro ran — the sweep, the version
+  probe, the NSE bundles and each per-port enumeration step — with its exit
+  code and raw-output path. That is what distinguishes a genuinely clean host
+  from a scan that failed: with `-Pn`, nmap exits `0` against a dead host too.
+- **The failure banner** appears whenever any command exited non-zero. Here
+  `netexec` crashed, so the findings list is not trustworthy as a complete
+  picture, and the report says so instead of quietly looking clean.
+- **Not run** records what rastro chose not to do and why. Port 8082 was open
+  and confirmed, but no service matched a rule, so nothing enumerated it.
+  A short findings list can mean a clean host *or* a gap in coverage — this
+  section is how you tell which.
 
 ## Flags
 

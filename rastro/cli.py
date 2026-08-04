@@ -156,7 +156,10 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as error:
         print(f"cannot create output directory: {error}", file=sys.stderr)
         return EXIT_MISSING_TOOL
-    print(output_dir)  # first line, always: never make the user hunt for results
+    # The path is always reported — never make the user hunt for results — but
+    # under --json it goes to stderr so stdout carries nothing but the JSON
+    # document and stays pipeable into jq.
+    print(output_dir, file=sys.stderr if args.json else sys.stdout)
 
     try:
         if not args.no_install:

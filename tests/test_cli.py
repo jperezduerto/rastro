@@ -213,3 +213,31 @@ def test_ownership_is_handed_back_even_when_a_stage_raises(tmp_path, monkeypatch
     with pytest.raises(RuntimeError):
         cli.main(["10.0.0.5", "--no-install"])
     assert called, "drop_ownership must run from the finally block"
+
+
+def test_json_mode_keeps_stdout_pure_json(tmp_path, monkeypatch, capsys):
+    # `rastro --json --quiet | jq` must work: the output-path line goes to stderr
+    # under --json, or the first line of stdout is not JSON and the pipe breaks.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "resolve_target", lambda t: "10.0.0.5")
+    monkeypatch.setattr(cli.tools, "detect", lambda rules: {"nmap": "/usr/bin/nmap"})
+    for stage in (cli.discover, cli.identify, cli.enumerate_stage, cli.classify):
+        monkeypatch.setattr(stage, "run", lambda host, ctx: host)
+
+    cli.main(["10.0.0.5", "--no-install", "--json", "--quiet"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)          # raises if anything else is on stdout
+    assert payload["target"] == "10.0.0.5"
+    assert "rastro-10.0.0.5-" in captured.err   # path still reported, just not on stdout
+
+
+def test_output_path_stays_on_stdout_without_json(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "resolve_target", lambda t: "10.0.0.5")
+    monkeypatch.setattr(cli.tools, "detect", lambda rules: {"nmap": "/usr/bin/nmap"})
+    for stage in (cli.discover, cli.identify, cli.enumerate_stage, cli.classify):
+        monkeypatch.setattr(stage, "run", lambda host, ctx: host)
+
+    cli.main(["10.0.0.5", "--no-install", "--quiet"])
+    assert "rastro-10.0.0.5-" in capsys.readouterr().out.splitlines()[0]
