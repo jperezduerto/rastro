@@ -24,17 +24,23 @@ not exist on Windows. It is not tested on macOS.
 
 ## Install
 
+rastro is not on PyPI yet. Install from source:
+
 ```bash
-pip install rastro-sec
+git clone https://github.com/jperezduerto/rastro
+cd rastro
+pip install .
 ```
 
 The installed command is `rastro`.
 
 On a Debian-family system where the Python install is externally managed
-(PEP 668), install into a virtualenv:
+(PEP 668) — Kali included — install into a virtualenv:
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate && pip install rastro-sec
+python3 -m venv .venv
+. .venv/bin/activate
+pip install .
 ```
 
 ### Docker

@@ -58,9 +58,13 @@ def test_license_is_mit_with_a_named_holder():
     assert _COMPANY_NAME not in text
 
 
-def test_readme_uses_the_pypi_package_name():
+def test_readme_install_instructions_actually_work():
+    # rastro is not on PyPI, so the README must not tell a reader to pip install
+    # a name that does not resolve — the first command they copy would fail.
     readme = (ROOT / "README.md").read_text()
-    assert "pip install rastro-sec" in readme
+    assert "pip install rastro-sec" not in readme
+    assert "git clone https://github.com/jperezduerto/rastro" in readme
+    assert "pip install ." in readme
 
 
 def test_readme_shows_sudo_because_rastro_requires_root():
