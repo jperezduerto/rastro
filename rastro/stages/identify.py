@@ -6,6 +6,7 @@ distinction gates expensive enumeration downstream.
 from __future__ import annotations
 
 import re
+import shlex
 from typing import Any
 
 from ..model import Context, Host, Service
@@ -57,13 +58,10 @@ def parse_nmap_service(text: str, port: int) -> tuple[str, str]:
 def version_probe_command(target: str, ports: list[int]) -> str:
     """One -sV pass across every open port. This is what earns `confirmed`.
 
-    Always single-quotes the target, even when `shlex.quote` would leave it
-    bare (e.g. a plain IP has no shell-unsafe characters) — this runs as
-    root with user-supplied input, so the quoting must be unconditional.
+    The target is shell-quoted because this runs as root with user-supplied input.
     """
     port_list = ",".join(str(int(p)) for p in sorted(ports))
-    quoted = "'" + str(target).replace("'", "'\"'\"'") + "'"
-    return f"nmap -Pn -sV --host-timeout 300s -p{port_list} {quoted}"
+    return f"nmap -Pn -sV --host-timeout 300s -p{port_list} {shlex.quote(str(target))}"
 
 
 def run(host: Host, ctx: Context) -> Host:

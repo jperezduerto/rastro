@@ -41,13 +41,26 @@ def test_run_is_idempotent(tmp_path):
     assert len(twice.ports) == 1
 
 
-def test_version_probe_command_covers_all_ports_and_quotes_target():
+def test_version_probe_command_covers_all_ports():
     from rastro.stages.identify import version_probe_command
 
     cmd = version_probe_command("10.0.0.5", [22, 445])
     assert "-sV" in cmd
     assert "-p22,445" in cmd
-    assert "'10.0.0.5'" in cmd
+    assert cmd.endswith("10.0.0.5")
+
+
+def test_version_probe_command_neutralises_injection():
+    # shlex.quote leaves a safe token bare, so assert the security property
+    # (the metacharacters cannot escape the argument), not a literal quote char.
+    import shlex
+
+    from rastro.stages.identify import version_probe_command
+
+    hostile = "10.0.0.5; rm -rf /"
+    cmd = version_probe_command(hostile, [22])
+    assert shlex.quote(hostile) in cmd
+    assert "; rm -rf /" not in cmd.replace(shlex.quote(hostile), "")
 
 
 def test_parse_nmap_service_extracts_product_and_version():
