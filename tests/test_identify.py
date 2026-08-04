@@ -78,6 +78,39 @@ def test_parse_nmap_service_returns_empty_when_absent():
     assert parse_nmap_service("nothing here", 445) == ("", "")
 
 
+def test_parse_nmap_service_handles_letter_suffixed_version():
+    from rastro.stages.identify import parse_nmap_service
+
+    text = "22/tcp open  ssh  OpenSSH 8.2p1 Ubuntu 4ubuntu0.5 (Ubuntu Linux; protocol 2.0)\n"
+    product, version = parse_nmap_service(text, 22)
+    assert product == "OpenSSH"
+    assert version == "8.2p1"          # not 2.0 from the protocol parenthetical
+
+
+def test_parse_nmap_service_does_not_truncate_or_leak_fragments():
+    from rastro.stages.identify import parse_nmap_service
+
+    product, version = parse_nmap_service("21/tcp open  ftp  ProFTPD 1.3.5e\n", 21)
+    assert product == "ProFTPD"
+    assert version == "1.3.5e"
+
+
+def test_parse_nmap_service_keeps_digits_inside_the_product_name():
+    from rastro.stages.identify import parse_nmap_service
+
+    product, version = parse_nmap_service("80/tcp open  http  Product2.0Server 2.0\n", 80)
+    assert product == "Product2.0Server"
+    assert version == "2.0"
+
+
+def test_parse_nmap_service_handles_a_versionless_banner():
+    from rastro.stages.identify import parse_nmap_service
+
+    product, version = parse_nmap_service("135/tcp open  msrpc  Microsoft Windows RPC\n", 135)
+    assert product == "Microsoft Windows RPC"
+    assert version == ""
+
+
 def test_version_probe_upgrades_confidence_to_confirmed(tmp_path, monkeypatch):
     # Without this upgrade every `requires_confidence: confirmed` rule is dead code.
     import rastro.stages.identify as identify_module
