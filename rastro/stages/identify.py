@@ -42,17 +42,29 @@ def svc_for_port(port: int, services: dict[str, Any]) -> str:
     return ""
 
 
+# Trailing parentheticals are nmap's extra info ("(Ubuntu Linux; protocol 2.0)")
+# and routinely contain numbers that are not the service version.
+_PAREN = re.compile(r"\s*\([^)]*\)")
+
+
 def parse_nmap_service(text: str, port: int) -> tuple[str, str]:
-    """Extract (product, version) for a port from nmap -sV output. ('', '') if absent."""
+    """Extract (product, version) for a port from nmap -sV output. ('', '') if absent.
+
+    The version is the first whitespace-delimited token beginning with a digit;
+    everything before it is the product. Splitting on token position rather than
+    matching a numeric shape keeps versions like `8.2p1` and `1.3.5e` intact, and
+    never deletes a digit that happens to sit inside the product name.
+    """
     pattern = rf"(?m)^\s*{port}/tcp\s+open\s+\S+\s+(.+)$"
     match = re.search(pattern, text or "")
     if not match:
         return ("", "")
-    banner = match.group(1).strip()
-    version_match = re.search(r"\b(\d+(?:\.\d+)+)\b", banner)
-    version = version_match.group(1) if version_match else ""
-    product = banner.replace(version, "").strip() if version else banner
-    return (product, version)
+    banner = _PAREN.sub("", match.group(1)).strip()
+    tokens = banner.split()
+    for index, token in enumerate(tokens):
+        if token[0].isdigit():
+            return (" ".join(tokens[:index]), token)
+    return (banner, "")
 
 
 def version_probe_command(target: str, ports: list[int]) -> str:
