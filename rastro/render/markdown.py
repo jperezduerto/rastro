@@ -52,16 +52,35 @@ def render(host: Host) -> str:
     # Without this, a failed or empty sweep is indistinguishable from a clean host:
     # zero ports, no findings, nothing skipped, exit 0, and no sign a scan ever ran.
     lines += ["## Run commands", ""]
-    if host.artifacts:
+    # Per-port enumeration belongs here too. Listing only run-level artifacts hid
+    # enumeration failures entirely: a gobuster that exited 1 left the human
+    # report showing no findings and nothing skipped, with no sign it had run.
+    every_artifact = list(host.artifacts) + [
+        artifact
+        for port in sorted(host.ports, key=lambda p: p.number)
+        for artifact in port.artifacts
+    ]
+    if every_artifact:
         lines += ["| Tool | Command | Exit | Output |", "|---|---|---|---|"]
-        for artifact in host.artifacts:
+        for artifact in every_artifact:
+            status = str(artifact.exit_code)
+            if artifact.timed_out:
+                status = f"{status} (timed out)"
             lines.append(
                 f"| {_cell(artifact.tool)} | `{_cell(artifact.command)}` | "
-                f"{artifact.exit_code} | `{_cell(artifact.stdout_path)}` |"
+                f"{status} | `{_cell(artifact.stdout_path)}` |"
             )
     else:
-        lines.append("No run-level commands were executed.")
+        lines.append("No commands were executed.")
     lines.append("")
+
+    failed = [a for a in every_artifact if a.exit_code != 0]
+    if failed:
+        lines += [
+            f"**{len(failed)} command(s) failed.** A short findings list may reflect "
+            "those failures rather than a clean host.",
+            "",
+        ]
 
     lines += ["## Findings", ""]
     if host.findings:

@@ -66,8 +66,8 @@ def test_run_level_commands_are_reported_with_exit_code_and_raw_path():
     assert "| 1 |" in out
 
 
-def test_no_run_level_commands_says_so_explicitly():
-    assert "No run-level commands were executed." in render(Host(target="10.0.0.5"))
+def test_no_commands_says_so_explicitly():
+    assert "No commands were executed." in render(Host(target="10.0.0.5"))
 
 
 def test_hostile_banner_cannot_break_out_of_a_table_cell():
@@ -94,3 +94,26 @@ def test_hostile_banner_cannot_break_out_of_a_table_cell():
 def _unescaped_pipes(row: str) -> int:
     """Count only the pipes markdown treats as column delimiters."""
     return len(re.findall(r"(?<!\\)\|", row))
+
+
+def test_report_lists_per_port_commands_and_flags_failures():
+    # A failed enumeration must be visible in the human report, not only in JSON.
+    host = Host(target="10.0.0.5")
+    host.artifacts = [Artifact(tool="nmap", command="nmap -sS 10.0.0.5",
+                               exit_code=0, stdout_path="raw/discover.txt")]
+    host.ports = [
+        Port(number=8888, service=Service(name="http"),
+             artifacts=[Artifact(tool="gobuster", command="gobuster dir -u http://x/",
+                                 exit_code=1, stdout_path="raw/8888-http-dirs.txt")])
+    ]
+    out = render(host)
+    assert "gobuster" in out
+    assert "1 command(s) failed" in out
+
+
+def test_report_marks_a_timed_out_command():
+    host = Host(target="10.0.0.5")
+    host.artifacts = [Artifact(tool="nmap", command="nmap -sS 10.0.0.5", exit_code=124,
+                               timed_out=True, stdout_path="raw/discover.txt")]
+    out = render(host)
+    assert "timed out" in out

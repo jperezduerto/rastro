@@ -18,6 +18,9 @@
 FROM kalilinux/kali-rolling
 
 # Every tool rastro knows about, so a scan never touches a package manager.
+# dirb is here purely for its wordlists: /usr/share/wordlists/dirb is a symlink
+# that package provides, and rules/services.yaml points gobuster at common.txt.
+# Without it every HTTP directory scan exits 1.
 # rustscan is deliberately absent — it is not in the Kali repos, and nmap is
 # the supported fallback for the sweep.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -29,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         enum4linux-ng \
         netexec \
         wordlists \
+        dirb \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
