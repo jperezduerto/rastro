@@ -13,14 +13,22 @@ def test_all_documented_files_exist():
 
 
 def _source_files():
-    # .superpowers holds planning artifacts (git-ignored) that legitimately
-    # discuss the company-attribution/MIT constraint itself; it is not
-    # shipped source or documentation, so it must not be policed below.
-    skip = {".venv", ".git", "__pycache__", "docs", ".superpowers"}
+    # Exempt planning artifacts (which legitimately quote the forbidden strings while
+    # specifying the constraint) — but NOT the shipped docs under docs/, which are
+    # exactly what these tests exist to police.
+    skip = {".venv", ".git", "__pycache__", "dist", "build", ".pytest_cache",
+            ".superpowers", "superpowers"}
     for pattern in ("*.py", "*.yaml", "*.md", "*.toml"):
         for path in ROOT.rglob(pattern):
             if skip.isdisjoint(path.parts):
                 yield path
+
+
+def test_shipped_docs_are_actually_policed():
+    # Guard against a skip set so broad it exempts the files these tests exist for.
+    policed = {p.name for p in _source_files()}
+    for required in ("rules.md", "output.md", "agents.md", "README.md", "SKILL.md"):
+        assert required in policed, f"{required} is not being checked"
 
 
 # Built by concatenation, not written as a literal: these tests assert that
