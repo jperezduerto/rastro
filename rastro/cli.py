@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os as _os
+import os
 import socket
 import sys
 from datetime import datetime, timezone
@@ -16,26 +16,6 @@ from .render import live
 from .render import markdown
 from .rules.loader import RulesError, load_services, load_tools
 from .stages import classify, discover, enumerate as enumerate_stage, identify
-
-
-class _OsShim:
-    """Proxies to the real `os` module, except `geteuid` can be overridden locally.
-
-    `os.geteuid()` does not exist on Windows, but the euid gate below is
-    unit-tested on any platform via `monkeypatch.setattr(cli.os, "geteuid", ...)`,
-    which requires the attribute to already exist on `cli.os`. Setting it directly
-    on the real `os` module would leak into every other test in the session (it
-    would defeat `skipif(not hasattr(os, "geteuid"), ...)` guards elsewhere). This
-    shim keeps the override local to `cli.os` and changes nothing for real `os`.
-    """
-
-    def __getattr__(self, name):
-        return getattr(_os, name)
-
-
-os = _OsShim()
-if not hasattr(_os, "geteuid"):
-    os.geteuid = lambda: 0
 
 EXIT_OK = 0
 EXIT_MISSING_TOOL = 1
@@ -65,6 +45,18 @@ RESULT_SCHEMA = {
 
 class UnreachableTarget(Exception):
     """The target could not be resolved."""
+
+
+def _is_root() -> bool:
+    """True only when the effective uid is 0.
+
+    Windows has no `os.geteuid`; rastro targets Linux, so its absence means we
+    cannot verify privilege and must treat that as "not root". Failing closed is
+    the only safe default for a gate that guards raw sockets, package installs,
+    and chown.
+    """
+    geteuid = getattr(os, "geteuid", None)
+    return geteuid is not None and geteuid() == 0
 
 
 def resolve_target(target: str) -> str:
@@ -105,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Root is required: -sS, OS fingerprinting, UDP and raw sockets all need it.
     # Refuse rather than re-exec under sudo — self-elevation breaks without a TTY.
-    if os.geteuid() != 0:
+    if not _is_root():
         print(f"rastro must run as root. Run: sudo rastro {args.target}", file=sys.stderr)
         return EXIT_MISSING_TOOL
 

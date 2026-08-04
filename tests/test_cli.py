@@ -4,17 +4,30 @@ import pytest
 
 from rastro import cli
 
+# Captured before the autouse fixture below can patch it, so the dedicated test for
+# _is_root's fail-closed behavior can call the real implementation.
+_real_is_root = cli._is_root
+
 
 @pytest.fixture(autouse=True)
 def _pretend_root(monkeypatch):
-    monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(cli, "_is_root", lambda: True)
 
 
 def test_refuses_to_run_without_root(monkeypatch, capsys):
-    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(cli, "_is_root", lambda: False)
     code = cli.main(["10.0.0.5"])
     assert code == cli.EXIT_MISSING_TOOL
     assert "sudo" in capsys.readouterr().err.lower()
+
+
+def test_missing_geteuid_is_treated_as_not_root(monkeypatch):
+    # A platform where privilege cannot be verified must fail closed, never assume root.
+    # The autouse fixture above patches cli._is_root itself for every test in this
+    # module, so it must be restored to the real implementation to exercise it here.
+    monkeypatch.setattr(cli, "_is_root", _real_is_root)
+    monkeypatch.delattr(cli.os, "geteuid", raising=False)
+    assert cli._is_root() is False
 
 
 def test_schema_subcommand_emits_valid_json(capsys):
