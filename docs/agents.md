@@ -6,10 +6,15 @@ skill, a script, a CI job. It's a stricter, more explicit version of
 
 ## Preconditions
 
-- rastro **requires root**. It does not attempt to re-execute itself under
-  `sudo` — invoke it as `sudo rastro <target>` yourself. If you cannot
-  obtain root, do not retry; the euid check fails immediately every time and
-  no amount of retrying changes that.
+- rastro **requires root to scan**. When run unprivileged it re-executes
+  itself under `sudo` — but only when a terminal is attached. An agent
+  usually has no TTY, so instead of hanging on a password prompt rastro
+  prints the exact `sudo env ... -m rastro ...` command and exits `1`.
+  Either run that command, or invoke rastro from an already-root process.
+  Do not retry the unprivileged invocation; the result is identical every
+  time.
+- `--dry-run` needs no root at all. Use it to show your human what would run
+  before asking for privilege.
 - rastro does not check whether you are authorized to scan the target. Confirm
   authorization before invoking it.
 

@@ -24,24 +24,52 @@ not exist on Windows. It is not tested on macOS.
 
 ## Install
 
-rastro is not on PyPI yet. Install from source:
+**Installing rastro never needs `sudo`.** It installs into your own user
+environment and elevates itself only when you actually run a scan, so it can
+never disturb your system Python or conflict with distro packages.
+
+rastro is not on PyPI yet. The easiest route on Kali, Debian or Ubuntu is
+[pipx](https://pipx.pypa.io/), which keeps rastro in its own isolated
+environment:
+
+```bash
+sudo apt install -y pipx nmap
+pipx install "git+https://github.com/jperezduerto/rastro"
+```
+
+Then run it with no `sudo` prefix — rastro asks for root itself:
+
+```bash
+rastro 10.0.0.5
+```
+
+<details>
+<summary>Other install methods</summary>
+
+**From a clone**, if you want the tests and docs locally:
 
 ```bash
 git clone https://github.com/jperezduerto/rastro
 cd rastro
-pip install .
+pipx install .
 ```
 
-The installed command is `rastro`.
-
-On a Debian-family system where the Python install is externally managed
-(PEP 668) — Kali included — install into a virtualenv:
+**Into a plain virtualenv** — `pip install .` alone fails on Debian-family
+systems (PEP 668 marks the system Python externally managed):
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install .
+python3 -m venv ~/.venvs/rastro
+~/.venvs/rastro/bin/pip install "git+https://github.com/jperezduerto/rastro"
+~/.venvs/rastro/bin/rastro 10.0.0.5
 ```
+
+**Do not** use `sudo pip install --break-system-packages`. It works, but it
+installs into the system interpreter, which is exactly what PEP 668 exists to
+prevent and what a distro upgrade can break.
+
+</details>
+
+To uninstall: `pipx uninstall rastro-sec`.
 
 ### Docker
 
@@ -67,11 +95,11 @@ where results go.
 ## Quickstart
 
 ```bash
-sudo rastro 10.0.0.5
+rastro 10.0.0.5
 ```
 
-rastro prints the output directory as its first line, then a live view of
-each stage, then exits:
+rastro re-runs itself under `sudo` (prompting for your password), prints the
+output directory as its first line, then a live view of each stage:
 
 ```
 /home/you/rastro-10.0.0.5-20260804-194101
@@ -98,7 +126,7 @@ rastro-10.0.0.5-20260804-194101/
 anything. Use it when the target is unfamiliar, or to check a rules change:
 
 ```bash
-sudo rastro 10.0.0.5 --dry-run
+rastro 10.0.0.5 --dry-run     # no root needed: nothing runs, nothing is written
 ```
 
 Per-service enumeration commands cannot be shown in advance, because which
@@ -140,17 +168,17 @@ reason and the exact command it would have run. Nothing is dropped silently.
 
 ```bash
 # Keep results somewhere specific
-sudo rastro 10.0.0.5 --output /engagements/acme/host-5
+rastro 10.0.0.5 --output /engagements/acme/host-5
 
 # Pipe structured output straight into jq (progress goes to stderr, so
 # stdout stays clean)
-sudo rastro 10.0.0.5 --json --quiet | jq '.findings[]'
+rastro 10.0.0.5 --json --quiet | jq '.findings[]'
 
 # Use your own rules instead of the shipped ones
-sudo rastro 10.0.0.5 --rules ./my-services.yaml
+rastro 10.0.0.5 --rules ./my-services.yaml
 
 # Don't touch the package manager; report anything missing instead
-sudo rastro 10.0.0.5 --no-install
+rastro 10.0.0.5 --no-install
 
 # Machine-readable description of result.json
 rastro schema
@@ -181,7 +209,8 @@ available, and how `--rules` overrides work.
 
 | Symptom | Cause and fix |
 |---|---|
-| `rastro must run as root` | Expected. Run `sudo rastro <target>` — rastro will not re-execute itself elevated. |
+| Password prompt on every run | Expected — rastro elevates itself to scan. Use `sudo rastro <target>` inside an already-root shell to skip it. |
+| `no terminal to prompt for a sudo password` | You are in CI, cron or an agent. Run the printed `sudo env ... -m rastro ...` command, or invoke rastro from an already-root process. |
 | `error: externally-managed-environment` on install | PEP 668 (Debian, Ubuntu, Kali). Install into a virtualenv, as shown above. |
 | Exit code `3` and a failure banner | One or more tools exited non-zero. Check the **Run commands** table for which, then read its file under `raw/`. The results are still valid, just incomplete. |
 | Findings list is empty | Check **Not run** first. An empty findings list with skipped steps means gaps in coverage, not a clean host. |
@@ -191,13 +220,25 @@ available, and how `--rules` overrides work.
 
 ## Why root
 
-rastro **requires root** and refuses to run without it — it does not try to
-re-execute itself under `sudo`, because self-elevation without a TTY is
-unreliable. Run it as:
+rastro **requires root to scan**, but not to install. Run it without a prefix
+and it re-executes itself under `sudo`, prompting for your password:
 
 ```bash
-sudo rastro <target>
+rastro <target>
 ```
+
+`sudo rastro <target>` also works if rastro is on root's PATH, but after a
+user-level install it usually is not — which is precisely why rastro elevates
+itself rather than leaving you to solve a PATH problem.
+
+Elevation is guarded, not automatic. When there is **no terminal** to prompt
+at — CI, cron, an agent — rastro does not hang waiting on a password. It
+prints the exact command to run and exits `1`. It also refuses if `sudo` is
+absent, and will not re-elevate a second time if the first attempt somehow
+did not produce root.
+
+`--dry-run` needs no root at all, since it executes nothing and writes
+nothing.
 
 Root is not incidental; it is required by what rastro's default scan actually
 does:

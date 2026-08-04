@@ -10,17 +10,23 @@ Two-phase host recon: fast port sweep, then per-service enumeration. Emits
 
 ## Before running
 
-rastro **requires root**. If you cannot run `sudo`, ask your human rather than
-retrying — the euid check fails immediately and retrying will not help.
+rastro **requires root to scan**. Run unprivileged, it re-executes itself
+under `sudo` — but only when a terminal is attached. You usually have no TTY,
+so rastro will instead print the exact `sudo env ... -m rastro ...` command
+and exit `1` rather than hang on a password prompt. Run that command, or
+invoke rastro from an already-root process. Do not retry the unprivileged
+form; it fails identically every time.
+
+`--dry-run` needs no root — use it to show your human what would run first.
 
 Confirm the target is authorized before scanning. rastro does not check this.
 
 ## Commands
 
 ```bash
-sudo rastro 10.0.0.5                 # normal run
-sudo rastro 10.0.0.5 --dry-run       # print the sweep command, touch nothing
-sudo rastro 10.0.0.5 --json          # also emit result JSON on stdout
+sudo rastro 10.0.0.5                 # normal run (already root, or sudo works)
+rastro 10.0.0.5 --dry-run            # print the sweep command; no root needed
+sudo rastro 10.0.0.5 --json --quiet  # result JSON on stdout, nothing else
 rastro schema                        # JSON Schema for result.json
 ```
 

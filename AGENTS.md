@@ -8,8 +8,10 @@ rastro.
 
 ## Root requirement
 
-rastro requires root and will not re-execute itself under `sudo`. Invoke it
-as `sudo rastro <target>`; if root is unavailable, do not retry.
+rastro requires root to scan. Unprivileged, it re-executes itself under
+`sudo`, but only with a terminal attached — without one it prints the exact
+command and exits `1` instead of hanging on a password prompt. Installing
+rastro never needs sudo. `--dry-run` needs no root.
 
 ## Build / test
 

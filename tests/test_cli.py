@@ -14,11 +14,83 @@ def _pretend_root(monkeypatch):
     monkeypatch.setattr(cli, "_is_root", lambda: True)
 
 
-def test_refuses_to_run_without_root(monkeypatch, capsys):
+def test_non_root_with_a_tty_reexecutes_under_sudo(monkeypatch):
+    # Install is sudo-free, so the console script lives in ~/.local/bin, which is
+    # NOT on root's PATH. Elevation must go through sys.executable -m rastro.
     monkeypatch.setattr(cli, "_is_root", lambda: False)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/sudo")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.delenv(cli.ELEVATED_ENV, raising=False)
+
+    called: dict = {}
+    monkeypatch.setattr(cli.os, "execvp",
+                        lambda path, argv: called.update(path=path, argv=argv))
+
+    cli.main(["10.0.0.5", "--no-install"])
+
+    assert called["path"] == "/usr/bin/sudo"
+    assert called["argv"][:2] == ["sudo", "env"]
+    assert f"{cli.ELEVATED_ENV}=1" in called["argv"]
+    assert "-m" in called["argv"] and "rastro" in called["argv"]
+    assert called["argv"][-2:] == ["10.0.0.5", "--no-install"]
+    assert "rastro" not in called["argv"][:1]      # never `sudo rastro`, which PATH breaks
+
+
+def test_non_root_without_a_tty_prints_the_command_instead_of_hanging(monkeypatch, capsys):
+    # CI, cron and agents have no terminal: a sudo password prompt would block
+    # forever, so print the command and let the caller decide.
+    monkeypatch.setattr(cli, "_is_root", lambda: False)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/sudo")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    monkeypatch.delenv(cli.ELEVATED_ENV, raising=False)
+
+    def _explode(*a, **k):
+        raise AssertionError("must not exec without a tty")
+
+    monkeypatch.setattr(cli.os, "execvp", _explode)
+
+    code = cli.main(["10.0.0.5"])
+    err = capsys.readouterr().err
+    assert code == cli.EXIT_MISSING_TOOL
+    assert "no terminal" in err
+    assert "-m rastro" in err
+
+
+def test_non_root_without_sudo_installed_refuses_cleanly(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_is_root", lambda: False)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    monkeypatch.delenv(cli.ELEVATED_ENV, raising=False)
     code = cli.main(["10.0.0.5"])
     assert code == cli.EXIT_MISSING_TOOL
-    assert "sudo" in capsys.readouterr().err.lower()
+    assert "sudo was not found" in capsys.readouterr().err
+
+
+def test_already_elevated_but_still_not_root_does_not_loop(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_is_root", lambda: False)
+    monkeypatch.setenv(cli.ELEVATED_ENV, "1")
+
+    def _explode(*a, **k):
+        raise AssertionError("must not re-elevate")
+
+    monkeypatch.setattr(cli.os, "execvp", _explode)
+    code = cli.main(["10.0.0.5"])
+    assert code == cli.EXIT_MISSING_TOOL
+    assert "still not root" in capsys.readouterr().err
+
+
+def test_dry_run_needs_no_root_and_never_elevates(tmp_path, monkeypatch, capsys):
+    # Prompting for a password just to print a command would be gratuitous.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_is_root", lambda: False)
+    monkeypatch.setattr(cli, "resolve_target", lambda t: "10.0.0.5")
+
+    def _explode(*a, **k):
+        raise AssertionError("dry-run must not elevate")
+
+    monkeypatch.setattr(cli.os, "execvp", _explode)
+
+    assert cli.main(["10.0.0.5", "--dry-run"]) == cli.EXIT_OK
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_missing_geteuid_is_treated_as_not_root(monkeypatch):

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import socket
 import sys
 from datetime import datetime, timezone
@@ -45,6 +46,58 @@ RESULT_SCHEMA = {
 
 class UnreachableTarget(Exception):
     """The target could not be resolved."""
+
+
+ELEVATED_ENV = "RASTRO_ELEVATED"
+
+
+def _relaunch_command(argv: list[str]) -> list[str]:
+    """The argv that re-runs this exact invocation as root.
+
+    Built from `sys.executable` rather than the `rastro` script name: a
+    sudo-free install puts the script in ~/.local/bin, which is not on root's
+    PATH, so `sudo rastro` would fail with "command not found". The interpreter
+    path is absolute and belongs to the same environment rastro is installed in.
+    """
+    return ["sudo", "env", f"{ELEVATED_ENV}=1", sys.executable, "-m", "rastro", *argv]
+
+
+def _elevate(argv: list[str]) -> int:
+    """Re-run under sudo. Does not return when elevation succeeds.
+
+    Guarded rather than unconditional. Without a TTY — CI, cron, an agent —
+    sudo's password prompt would block forever, so we print the command and let
+    the caller decide instead of hanging.
+    """
+    printable = " ".join(_relaunch_command(argv))
+
+    if os.environ.get(ELEVATED_ENV):
+        # Already came through sudo and still not root: something is wrong with
+        # the sudo configuration, and re-elevating would loop.
+        print(
+            "rastro re-executed under sudo but is still not root; check your "
+            "sudo configuration.",
+            file=sys.stderr,
+        )
+        return EXIT_MISSING_TOOL
+
+    sudo = shutil.which("sudo")
+    if sudo is None:
+        print(f"rastro needs root and sudo was not found. Run as root:\n  {printable}",
+              file=sys.stderr)
+        return EXIT_MISSING_TOOL
+
+    if not sys.stdin.isatty():
+        print(
+            "rastro needs root, and there is no terminal to prompt for a sudo "
+            f"password. Run:\n  {printable}",
+            file=sys.stderr,
+        )
+        return EXIT_MISSING_TOOL
+
+    print("rastro needs root; re-running under sudo.", file=sys.stderr)
+    os.execvp(sudo, _relaunch_command(argv))
+    return EXIT_MISSING_TOOL  # unreachable: execvp replaces the process
 
 
 def _is_root() -> bool:
@@ -95,11 +148,10 @@ def main(argv: list[str] | None = None) -> int:
         build_parser().print_help()
         return EXIT_OK
 
-    # Root is required: -sS, OS fingerprinting, UDP and raw sockets all need it.
-    # Refuse rather than re-exec under sudo — self-elevation breaks without a TTY.
-    if not _is_root():
-        print(f"rastro must run as root. Run: sudo rastro {args.target}", file=sys.stderr)
-        return EXIT_MISSING_TOOL
+    # --dry-run executes nothing and writes nothing, so it does not need root.
+    # Prompting for a password just to print a command would be gratuitous.
+    if not args.dry_run and not _is_root():
+        return _elevate(argv if argv is not None else sys.argv[1:])
 
     try:
         service_rules = load_services(Path(args.rules) if args.rules else None)
