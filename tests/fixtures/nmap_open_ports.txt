@@ -1,0 +1,12 @@
+Starting Nmap 7.94 ( https://nmap.org )
+Nmap scan report for 10.0.0.5
+Host is up (0.021s latency).
+Not shown: 996 closed tcp ports (reset)
+PORT     STATE SERVICE
+22/tcp   open  ssh
+80/tcp   open  http
+445/tcp  open  microsoft-ds
+3389/tcp closed ms-wbt-server
+5985/tcp open  wsman
+
+Nmap done: 1 IP address (1 host up) scanned in 4.21 seconds
