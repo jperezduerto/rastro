@@ -27,10 +27,16 @@ parse stderr text.
 
 ## `--dry-run`
 
-Prints every command rastro would run, one per line, to stdout, and touches
-nothing on disk — no output directory is created. Use it to preview a scan
-before committing to one, especially against an unfamiliar target. Exit code
-is always `0` unless the target itself can't be resolved beforehand.
+Prints the **sweep command** rastro would run to stdout, and touches nothing
+on disk — no output directory is created. Exit code is always `0` unless the
+target itself can't be resolved beforehand.
+
+It is not a full command list, and must not be presented as one. Because
+dry-run does not scan, no ports are known, so the per-service enumeration
+commands cannot be planned — those depend entirely on what the sweep finds.
+The output says so explicitly on a trailing `#` comment line. Use dry-run to
+confirm *how* rastro will approach a target, not to enumerate everything it
+will eventually do.
 
 ## `--json`
 

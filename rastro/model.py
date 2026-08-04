@@ -11,6 +11,9 @@ from typing import Any
 
 # How a service was identified, weakest to strongest. `plan.py` gates expensive
 # enumeration on this so we don't fire noisy tools at a port-number guess.
+# `banner` is a reserved ordering point: identify.py only ever assigns `guess` or
+# `confirmed`, so a rule requiring `banner` behaves as if it required `confirmed`.
+# Kept in the scale (rather than removed) so the rules schema stays stable.
 CONFIDENCE_ORDER: dict[str, int] = {"guess": 0, "banner": 1, "confirmed": 2}
 
 

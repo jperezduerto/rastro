@@ -134,6 +134,13 @@ def main(argv: list[str] | None = None) -> int:
         for entry in host.skipped:
             for command in entry.get("would_have_run", []):
                 print(command)
+        # Be honest about what this is. Dry-run does not scan, so no ports are
+        # known and no per-service enumeration can be planned — without this note
+        # an operator would read one nmap line as the whole engagement.
+        print(
+            "# per-service enumeration commands depend on which ports are open, "
+            "and are planned after the sweep"
+        )
         return EXIT_OK
 
     now = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")

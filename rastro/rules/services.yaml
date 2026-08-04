@@ -1,5 +1,7 @@
 # rastro service inventory. Pure data: add a service here, not in Python.
 # `requires_confidence` is a MINIMUM on the guess < banner < confirmed scale.
+# `banner` is reserved: identify never assigns it, so requiring it behaves as
+# `confirmed`. `{scheme}` renders https on TLS ports, http otherwise.
 version: 1
 services:
   http:

@@ -7,6 +7,21 @@ alongside a human-readable report. It is the successor to my earlier
 YAML-driven rules engine so services and enumeration steps can be added
 without touching Python.
 
+## Authorization
+
+rastro is an active reconnaissance tool: it port-scans the target and fires
+enumeration commands at whatever it finds. **Only scan systems you own or
+have explicit, written authorization to test.** Unauthorized scanning is
+illegal in many jurisdictions, and rastro does not and cannot verify that you
+are permitted to scan a given host — that check is yours to make before you
+run it.
+
+## Supported platforms
+
+Linux only. rastro requires root, drives Linux packaging (`apt`, `dnf`,
+`pacman`) for its self-install path, and depends on `os.geteuid`, which does
+not exist on Windows. It is not tested on macOS.
+
 ## Install
 
 ```bash
@@ -35,17 +50,18 @@ unreliable. Run it as:
 sudo rastro <target>
 ```
 
-Root is not incidental; it is required by the techniques rastro's default
-scan uses:
+Root is not incidental; it is required by what rastro's default scan actually
+does:
 
-- **SYN scan (`-sS`)** — nmap crafts raw TCP SYN packets and never completes
-  the handshake, which needs a raw socket only root can open.
-- **OS fingerprinting** — nmap's `-O` sends malformed/edge-case packets and
-  inspects low-level stack responses, again via raw sockets.
-- **UDP scanning** — UDP has no handshake to piggyback on, so rastro reads
-  raw ICMP responses to tell open from closed/filtered.
-- **Raw sockets generally** — several NSE scripts and enumeration tools
-  rastro drives assume raw-socket access is already available.
+- **SYN scan (`-sS`)** — the fallback port sweep (used whenever `rustscan`
+  is not installed) has nmap craft raw TCP SYN packets and never complete the
+  handshake. That needs a raw socket, which only root can open.
+- **Package installation** — rastro installs its own missing tools through
+  the system package manager, which requires root.
+
+Some `enum` rules also invoke nmap modes that need root (for example the DNS
+and SNMP steps use `-sU`), but the two reasons above are why rastro refuses
+to start without it.
 
 Because output is written while running as root, ownership of the entire
 output directory is handed back to the invoking user (via `SUDO_UID`/
@@ -59,9 +75,11 @@ rastro runs a five-stage pipeline, then renders the result:
 1. **discover** — a fast port sweep (rustscan if present, nmap otherwise)
    finds open ports.
 2. **identify** — nmap service/version detection maps each open port to a
-   candidate service and a confidence level: `guess` (port number only),
-   `banner` (nmap parsed a banner), or `confirmed` (nmap positively
-   identified the service).
+   candidate service and a confidence level: `guess` (port number only) or
+   `confirmed` (nmap positively identified the service). A third level,
+   `banner`, sits between them in the ordering but is **reserved** — the
+   current `identify` stage never produces it (see
+   [`docs/rules.md`](docs/rules.md)).
 3. **plan** — for each identified service, the YAML rules (see
    [`docs/rules.md`](docs/rules.md)) are consulted to decide which
    enumeration commands to run. A command only runs if the port's confidence
@@ -97,22 +115,34 @@ The result is written to a fresh output directory (see
 |---|---|---|---|
 | 22 | ssh | OpenSSH 9.6 | confirmed |
 | 80 | http | nginx | confirmed |
-| 445 | smb | Samba 4.17 | banner |
+| 445 | smb | Samba 4.17 | confirmed |
+
+## Run commands
+
+| Tool | Command | Exit | Output |
+|---|---|---|---|
+| nmap | `nmap -Pn -sS -T4 ... 10.0.0.5` | 0 | `raw/discover.txt` |
+| nmap | `nmap -Pn -sV ... 10.0.0.5` | 0 | `raw/identify.txt` |
 
 ## Findings
 
-### HTTP server header discloses nginx version
+### SMB signing not required
 
-- **Interest:** info
-- **Evidence:** `Server: nginx/1.24.0`
-- **Source:** `raw/80-http-headers.txt`
+- **Interest:** high
+- **Evidence:** `message signing enabled but not required`
+- **Source:** `raw/445-smb-shares.txt`
 
 ## Not run
 
 | Tool | Reason | Would have run |
 |---|---|---|
-| gobuster | confidence 'banner' below required 'confirmed' | `gobuster dir -q -u http://10.0.0.5:80/ ...` |
+| gobuster | not installed | `gobuster dir -q -k -u http://10.0.0.5:80/ ...` |
 ```
+
+The **Run commands** section lists every run-level command (the sweep and the
+version probe) with its exit code and raw-output path. It is what
+distinguishes a genuinely clean host from a sweep that failed or found
+nothing — with `-Pn`, nmap exits `0` against a dead host too.
 
 ## Flags
 
@@ -121,7 +151,7 @@ The result is written to a fresh output directory (see
 | `target` | Host or IP to scan, or `schema` |
 | `--output` | Explicit output directory (default: `./rastro-<target>-<timestamp>`) |
 | `--rules` | Alternate `services.yaml` |
-| `--dry-run` | Print the commands rastro would run; touches nothing on disk |
+| `--dry-run` | Print the sweep command rastro would run; touches nothing on disk |
 | `--no-install` | Never install missing tools |
 | `--json` | Also write the result JSON to stdout |
 | `--quiet` | Suppress the live view |
@@ -140,14 +170,25 @@ The result is written to a fresh output directory (see
 ## Tools
 
 rastro drives external tools rather than reimplementing them. All but nmap
-are optional; rastro installs any missing optional or required tool
-automatically (via your system package manager) unless you pass
-`--no-install`.
+are optional. Unless you pass `--no-install`, rastro tries to install missing
+tools through your system package manager (`apt`, `dnf`, or `pacman`).
+
+**Coverage varies by distribution.** Not every tool is packaged for every
+manager — `netexec` and `enum4linux-ng` are mapped for `apt` only, and
+`rustscan` is not packaged at all. Nothing is installed silently or
+partially-claimed: any tool rastro cannot install is recorded in `skipped`
+with the reason, and any `enum` step that needed it is recorded there too,
+alongside the exact command that would have run.
+
+`rustscan` is optional and has **no package mapping** — install it yourself
+(see [rustscan's releases](https://github.com/bee-san/RustScan/releases)) if
+you want the faster sweep. Without it, rastro falls back to an nmap SYN sweep
+of a common-port list, which works but is slower.
 
 | Tool | Required | Used for |
 |---|---|---|
 | `nmap` | yes | Port sweep fallback, service/version detection, most NSE-based enumeration |
-| `rustscan` | no | Fast initial port sweep, when installed |
+| `rustscan` | no | Fast initial port sweep, when installed (manual install only) |
 | `curl` | no | HTTP header/response probing |
 | `gobuster` | no | Directory brute-forcing (gated on `confirmed` HTTP) |
 | `netexec` | no | SMB share enumeration |

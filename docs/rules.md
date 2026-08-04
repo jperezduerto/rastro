@@ -64,9 +64,16 @@ guess < banner < confirmed
 
 - **`guess`** — the port number matched a service's `ports` list; nothing
   else is known.
-- **`banner`** — nmap parsed a service banner or partial version string.
+- **`banner`** — **reserved; not currently produced.** It is a valid value
+  for `requires_confidence` and a real point in the ordering, but the
+  `identify` stage only ever assigns `guess` or `confirmed`. An entry
+  written as `requires_confidence: banner` therefore behaves exactly as if
+  it required `confirmed`: no `guess` port satisfies it, and every
+  `confirmed` port does. Use `confirmed` unless you specifically want to
+  reserve the entry for a future banner-grabbing identify pass.
 - **`confirmed`** — nmap positively identified the service (and usually its
-  version).
+  version). This is the only level above `guess` that `identify` assigns
+  today.
 
 `requires_confidence` on an `enum` entry is a **minimum**, not an exact
 match: a `confirmed` port satisfies an entry that requires `guess` or

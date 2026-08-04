@@ -19,13 +19,16 @@ Confirm the target is authorized before scanning. rastro does not check this.
 
 ```bash
 sudo rastro 10.0.0.5                 # normal run
-sudo rastro 10.0.0.5 --dry-run       # print planned commands, touch nothing
+sudo rastro 10.0.0.5 --dry-run       # print the sweep command, touch nothing
 sudo rastro 10.0.0.5 --json          # also emit result JSON on stdout
 rastro schema                        # JSON Schema for result.json
 ```
 
 Show your human `--dry-run` output before a real scan when the target is
-unfamiliar.
+unfamiliar. Be accurate about what it shows: only the **sweep command**.
+Dry-run does not scan, so no ports are known and the per-service enumeration
+commands cannot be planned — those are decided after the sweep. Do not
+describe dry-run output as the complete set of commands rastro will run.
 
 ## Exit codes
 

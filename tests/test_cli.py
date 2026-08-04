@@ -55,6 +55,17 @@ def test_dry_run_writes_no_output_dir_and_prints_commands(tmp_path, monkeypatch,
     assert "nmap" in capsys.readouterr().out
 
 
+def test_dry_run_says_enumeration_is_planned_after_the_sweep(tmp_path, monkeypatch, capsys):
+    # Dry-run does not scan, so no ports exist and no per-service enumeration can be
+    # planned. Without this note the single nmap line reads as the whole engagement.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "resolve_target", lambda t: "10.0.0.5")
+    assert cli.main(["10.0.0.5", "--dry-run"]) == cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert "planned after the sweep" in out
+    assert "depend on which ports are open" in out
+
+
 _MINIMAL_RULES = """\
 version: 1
 services:

@@ -68,7 +68,7 @@ left as-is — there is no non-root user to hand it back to.
 | `name` | string | Service identifier, matching a key in `services.yaml` |
 | `product` | string | Product name nmap reported, if any |
 | `version` | string | Version string nmap reported, if any |
-| `confidence` | string | `guess`, `banner`, or `confirmed` — see [`docs/rules.md`](rules.md) |
+| `confidence` | string | `guess` or `confirmed` in practice. `banner` is a reserved third level that `identify` does not currently produce — see [`docs/rules.md`](rules.md) |
 
 ### `Artifact`
 
@@ -120,6 +120,17 @@ empty.
 ## `report.md`
 
 A human-readable rendering of the same `Host` object: target/timing header,
-a "Surfaces" section from `buckets`, an open-ports table, a "Findings"
-section (or "None." if empty), and a "Not run" section listing every
-`skipped` entry (or "Nothing skipped." if empty).
+a "Surfaces" section from `buckets`, an open-ports table (or "No open ports
+found."), a "Run commands" section, a "Findings" section (or "None." if
+empty), and a "Not run" section listing every `skipped` entry (or "Nothing
+skipped." if empty).
+
+"Run commands" lists the run-level artifacts — the sweep and the version
+probe — with each command's exit code and raw-output path. Read it whenever
+a report shows no ports: with `-Pn`, nmap exits `0` against a dead host, so
+an empty result is otherwise indistinguishable from a genuinely clean one.
+A nonzero exit there means the sweep itself failed.
+
+Values interpolated into report tables (service product/version in
+particular) come from the scanned host's own banner and are escaped before
+rendering, so a hostile banner containing `|` cannot break out of a cell.

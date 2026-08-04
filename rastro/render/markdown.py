@@ -4,6 +4,17 @@ from __future__ import annotations
 from ..model import Host
 
 
+def _cell(value: object) -> str:
+    """Make a value safe to drop into a markdown table cell.
+
+    Product and version strings are parsed straight out of the scanned host's own
+    banner, so their content is attacker-controlled. An unescaped `|` splits the
+    row and corrupts a document that may be pasted into a client deliverable.
+    """
+    text = "-" if value is None or value == "" else str(value)
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("`", "\\`").replace("\n", " ")
+
+
 def render(host: Host) -> str:
     lines: list[str] = [
         f"# rastro — {host.target}",
@@ -21,13 +32,35 @@ def render(host: Host) -> str:
             lines.append(f"- **{name}:** {', '.join(str(p) for p in ports)}")
         lines.append("")
 
-    lines += ["## Open ports", "", "| Port | Service | Product | Confidence |", "|---|---|---|---|"]
-    for port in sorted(host.ports, key=lambda p: p.number):
-        svc = port.service
-        lines.append(
-            f"| {port.number} | {svc.name if svc else '-'} | "
-            f"{svc.product if svc else '-'} | {svc.confidence if svc else '-'} |"
-        )
+    lines += ["## Open ports", ""]
+    if host.ports:
+        lines += ["| Port | Service | Product | Confidence |", "|---|---|---|---|"]
+        for port in sorted(host.ports, key=lambda p: p.number):
+            svc = port.service
+            lines.append(
+                f"| {port.number} | {_cell(svc.name) if svc else '-'} | "
+                f"{_cell(svc.product) if svc else '-'} | "
+                f"{_cell(svc.confidence) if svc else '-'} |"
+            )
+    else:
+        # An empty table reads as "clean host". With -Pn nmap exits 0 against a dead
+        # host too, so say it outright and let the Run commands section below show
+        # whether the sweep actually worked.
+        lines.append("No open ports found.")
+    lines.append("")
+
+    # Without this, a failed or empty sweep is indistinguishable from a clean host:
+    # zero ports, no findings, nothing skipped, exit 0, and no sign a scan ever ran.
+    lines += ["## Run commands", ""]
+    if host.artifacts:
+        lines += ["| Tool | Command | Exit | Output |", "|---|---|---|---|"]
+        for artifact in host.artifacts:
+            lines.append(
+                f"| {_cell(artifact.tool)} | `{_cell(artifact.command)}` | "
+                f"{artifact.exit_code} | `{_cell(artifact.stdout_path)}` |"
+            )
+    else:
+        lines.append("No run-level commands were executed.")
     lines.append("")
 
     lines += ["## Findings", ""]
@@ -51,7 +84,10 @@ def render(host: Host) -> str:
         lines += ["| Tool | Reason | Would have run |", "|---|---|---|"]
         for entry in host.skipped:
             would = "; ".join(entry.get("would_have_run", [])) or "-"
-            lines.append(f"| {entry.get('tool', '-')} | {entry.get('reason', '-')} | `{would}` |")
+            lines.append(
+                f"| {_cell(entry.get('tool', '-'))} | {_cell(entry.get('reason', '-'))} | "
+                f"`{_cell(would)}` |"
+            )
     else:
         lines.append("Nothing skipped.")
     lines.append("")
