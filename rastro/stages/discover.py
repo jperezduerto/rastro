@@ -66,11 +66,18 @@ def run(host: Host, ctx: Context) -> Host:
         output_dir=ctx.output_dir,
         slug="discover",
     )
-    text = (ctx.output_dir / artifact.stdout_path).read_text()
-    ports = parse_rustscan_ports(text) if tool == "rustscan" else parse_nmap_open_ports(text)
+    host.artifacts.append(artifact)
+
+    ports: list[int] = []
+    if artifact.stdout_path:
+        stdout_file = ctx.output_dir / artifact.stdout_path
+        try:
+            text = stdout_file.read_text()
+        except OSError:
+            text = None
+        if text is not None:
+            ports = parse_rustscan_ports(text) if tool == "rustscan" else parse_nmap_open_ports(text)
 
     for number in ports:
         host.ports.append(Port(number=number))
-    if host.ports:
-        host.ports[0].artifacts.append(artifact)
     return host

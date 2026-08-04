@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import rastro.stages.discover as discover
+from rastro.model import Artifact, Context, Host
 from rastro.stages.discover import (
     parse_nmap_open_ports,
     parse_rustscan_ports,
@@ -39,3 +41,47 @@ def test_sweep_falls_back_to_nmap():
 def test_sweep_quotes_the_target():
     cmd, _ = sweep_command("10.0.0.5; rm -rf /", {"rustscan": None, "nmap": "/usr/bin/nmap"})
     assert "; rm -rf /" not in cmd.replace("'10.0.0.5; rm -rf /'", "")
+
+
+def test_zero_ports_still_records_artifact(tmp_path, monkeypatch):
+    """A clean sweep that finds nothing must still leave evidence on host.artifacts."""
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    (raw_dir / "discover.txt").write_text("no ports here")
+
+    fake_artifact = Artifact(
+        tool="nmap",
+        command="nmap ...",
+        exit_code=0,
+        stdout_path="raw/discover.txt",
+    )
+    monkeypatch.setattr(discover, "run_command", lambda *a, **k: fake_artifact)
+
+    host = Host(target="10.0.0.5")
+    ctx = Context(target="10.0.0.5", output_dir=tmp_path, tools={"rustscan": None, "nmap": "/usr/bin/nmap"})
+
+    result = discover.run(host, ctx)
+
+    assert result.ports == []
+    assert result.artifacts == [fake_artifact]
+
+
+def test_empty_stdout_path_does_not_raise(tmp_path, monkeypatch):
+    """run_command's contract: an empty stdout_path means it couldn't write output.
+    ctx.output_dir / '' resolves to the output dir itself; reading it as text
+    must not raise IsADirectoryError out of run()."""
+    fake_artifact = Artifact(
+        tool="nmap",
+        command="nmap ...",
+        exit_code=1,
+        stdout_path="",
+    )
+    monkeypatch.setattr(discover, "run_command", lambda *a, **k: fake_artifact)
+
+    host = Host(target="10.0.0.5")
+    ctx = Context(target="10.0.0.5", output_dir=tmp_path, tools={"rustscan": None, "nmap": "/usr/bin/nmap"})
+
+    result = discover.run(host, ctx)
+
+    assert result.ports == []
+    assert result.artifacts == [fake_artifact]

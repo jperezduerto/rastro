@@ -64,6 +64,7 @@ class Host:
     ports: list[Port] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     buckets: dict[str, list[int]] = field(default_factory=dict)
+    artifacts: list[Artifact] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -91,6 +92,7 @@ class Host:
             ports=ports,
             findings=[Finding(**f) for f in data.get("findings", [])],
             buckets=data.get("buckets", {}),
+            artifacts=[Artifact(**a) for a in data.get("artifacts", [])],
         )
 
 
