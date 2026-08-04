@@ -46,6 +46,59 @@ def svc_for_port(port: int, services: dict[str, Any]) -> str:
 # and routinely contain numbers that are not the service version.
 _PAREN = re.compile(r"\s*\([^)]*\)")
 
+# nmap's own service column -> the service name used in rules/services.yaml.
+# Without this, anything on a non-standard port (SSH on 10022, a web app on
+# 39903) is identified by -sV but never matched to a rule, so nothing enumerates
+# it — the port map alone only ever recognises well-known ports.
+NMAP_SERVICE_ALIASES: dict[str, str] = {
+    "ssh": "ssh",
+    "http": "http",
+    "https": "http",
+    "http-alt": "http",
+    "http-proxy": "http",
+    "ssl/http": "http",
+    "ssl/https": "http",
+    "ftp": "ftp",
+    "ssl/ftp": "ftp",
+    "smb": "smb",
+    "microsoft-ds": "smb",
+    "netbios-ssn": "smb",
+    "ldap": "ldap",
+    "ssl/ldap": "ldap",
+    "domain": "dns",
+    "smtp": "smtp",
+    "ssl/smtp": "smtp",
+    "submission": "smtp",
+    "mysql": "mysql",
+    "ms-sql-s": "mssql",
+    "ms-wbt-server": "rdp",
+    "snmp": "snmp",
+    "nfs": "nfs",
+    "wsman": "winrm",
+    "mongodb": "mongodb",
+}
+
+
+def parse_nmap_service_name(text: str, port: int) -> str:
+    """nmap's SERVICE column for a port ('ssh', 'http', ...), or '' when absent."""
+    pattern = rf"(?m)^\s*{port}/tcp\s+open\s+(\S+)"
+    match = re.search(pattern, text or "")
+    return match.group(1).strip() if match else ""
+
+
+def service_from_nmap_name(nmap_name: str, services: dict[str, Any]) -> str:
+    """Map nmap's service column onto a rules service name, or '' when unmatched."""
+    known = set((services.get("services") or {}))
+    name = (nmap_name or "").strip().lower()
+    if not name:
+        return ""
+    mapped = NMAP_SERVICE_ALIASES.get(name)
+    if mapped and mapped in known:
+        return mapped
+    # An exact match against a rules service still counts, so a user who adds a
+    # service keyed by nmap's own name gets it for free.
+    return name if name in known else ""
+
 
 def parse_nmap_service(text: str, port: int) -> tuple[str, str]:
     """Extract (product, version) for a port from nmap -sV output. ('', '') if absent.
@@ -115,11 +168,19 @@ def run(host: Host, ctx: Context) -> Host:
 
     for port in host.ports:
         product, version = parse_nmap_service(text, port.number)
-        if not product and not version:
+        # The service column is useful even when the version banner is blank: a
+        # bare "10022/tcp open ssh" still tells us which rules apply.
+        from_nmap = service_from_nmap_name(
+            parse_nmap_service_name(text, port.number), ctx.rules
+        )
+        if not product and not version and not from_nmap:
             continue
         if port.service is None:
-            name = svc_for_port(port.number, ctx.rules) or "unknown"
+            name = svc_for_port(port.number, ctx.rules) or from_nmap or "unknown"
             port.service = Service(name=name)
+        elif port.service.name in ("", "unknown") and from_nmap:
+            # The port map did not recognise this port; -sV did.
+            port.service.name = from_nmap
         port.service.product = product
         port.service.version = version
         port.service.confidence = "confirmed"

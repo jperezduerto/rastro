@@ -64,10 +64,26 @@ def build_plan(host: Host, ctx: Context) -> tuple[list[PlannedCommand], list[dic
     services = (ctx.rules.get("services") or {})
 
     for port in host.ports:
+        # An open port that gets no enumeration must say so. Reporting "nothing
+        # skipped" while several ports were never touched is exactly the silent
+        # degradation this project exists to avoid.
         if port.service is None:
+            skipped.append({
+                "tool": "-",
+                "reason": f"port {port.number} open but no service identified",
+                "would_have_run": [],
+            })
             continue
         spec = services.get(port.service.name)
         if not spec:
+            skipped.append({
+                "tool": "-",
+                "reason": (
+                    f"port {port.number}: no enumeration rules for service "
+                    f"{port.service.name!r}"
+                ),
+                "would_have_run": [],
+            })
             continue
         have = CONFIDENCE_ORDER.get(port.service.confidence, 0)
 

@@ -131,3 +131,23 @@ def test_slug_is_unique_per_port_and_entry(tmp_path):
     plan, _ = build_plan(host, _ctx(tmp_path, {"netexec": "/usr/bin/nxc"}))
     slugs = [p.spec.slug for p in plan]
     assert len(slugs) == len(set(slugs))
+
+
+def test_port_with_no_rules_is_recorded_as_skipped(tmp_path):
+    # "Nothing skipped" must never be reported while open ports went untouched.
+    host = Host(target="10.0.0.5")
+    host.ports = [Port(number=9999, service=Service(name="whatever", confidence="confirmed"))]
+    plan, skipped = build_plan(host, _ctx(tmp_path, {}))
+    assert plan == []
+    assert len(skipped) == 1
+    assert "no enumeration rules" in skipped[0]["reason"]
+    assert "9999" in skipped[0]["reason"]
+
+
+def test_port_with_no_service_is_recorded_as_skipped(tmp_path):
+    host = Host(target="10.0.0.5")
+    host.ports = [Port(number=40376)]
+    plan, skipped = build_plan(host, _ctx(tmp_path, {}))
+    assert plan == []
+    assert len(skipped) == 1
+    assert "no service identified" in skipped[0]["reason"]

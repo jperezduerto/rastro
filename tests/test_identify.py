@@ -151,3 +151,54 @@ def test_dry_run_stays_at_guess_and_runs_no_command(tmp_path, monkeypatch):
 
     result = run(host, ctx)
     assert result.ports[0].service.confidence == "guess"
+
+
+def test_nmap_service_column_names_a_service_on_a_nonstandard_port(tmp_path, monkeypatch):
+    # SSH on 10022 is not in any port map; only -sV's service column identifies it.
+    # Without this, nothing enumerates a service on a non-standard port.
+    import rastro.stages.identify as identify_module
+    from rastro.model import Artifact
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "identify.txt").write_text("10022/tcp open  ssh  OpenSSH 10.3p1 Debian-1\n")
+    monkeypatch.setattr(
+        identify_module, "run_command",
+        lambda *a, **k: Artifact(tool="nmap", command="nmap -sV",
+                                 stdout_path="raw/identify.txt"),
+    )
+    host = Host(target="10.0.0.5")
+    host.ports = [Port(number=10022)]
+    ctx = Context(target="10.0.0.5", output_dir=tmp_path, rules=RULES)
+
+    result = run(host, ctx)
+
+    assert result.ports[0].service.name == "ssh"
+    assert result.ports[0].service.confidence == "confirmed"
+
+
+def test_nmap_service_column_is_mapped_through_aliases():
+    from rastro.stages.identify import service_from_nmap_name
+
+    assert service_from_nmap_name("microsoft-ds", RULES) == "smb"
+    assert service_from_nmap_name("ssl/http", RULES) == "http"
+    assert service_from_nmap_name("domain", RULES) == "dns"
+    assert service_from_nmap_name("totally-unknown", RULES) == ""
+
+
+def test_port_map_still_wins_over_the_nmap_column(tmp_path, monkeypatch):
+    import rastro.stages.identify as identify_module
+    from rastro.model import Artifact
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "identify.txt").write_text("445/tcp open  microsoft-ds Samba smbd 4.6.2\n")
+    monkeypatch.setattr(
+        identify_module, "run_command",
+        lambda *a, **k: Artifact(tool="nmap", command="nmap -sV",
+                                 stdout_path="raw/identify.txt"),
+    )
+    host = Host(target="10.0.0.5")
+    host.ports = [Port(number=445)]
+    result = run(host, Context(target="10.0.0.5", output_dir=tmp_path, rules=RULES))
+    assert result.ports[0].service.name == "smb"
