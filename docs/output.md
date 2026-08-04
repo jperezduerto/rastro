@@ -13,9 +13,10 @@ rastro-<target>-<timestamp>/
 ```
 
 By default the directory is created under the current working directory as
-`rastro-<target>-<timestamp>` (falling back to
-`~/.local/share/rastro/` if the working directory isn't writable). Pass
-`--output <path>` to choose the location explicitly.
+`rastro-<target>-<timestamp>`. Pass `--output <path>` to choose the location
+explicitly. There is no fallback location: if the directory cannot be
+created, rastro says so and exits `1` rather than writing somewhere you did
+not ask for.
 
 **The output directory's absolute path is always printed as the first line
 of stdout**, before anything else — you never have to hunt for it, including
@@ -29,6 +30,10 @@ the entire output directory back to the invoking user using the `SUDO_UID`
 /`SUDO_GID` environment variables `sudo` sets. If those aren't present (for
 example, a genuine root login with no `sudo` in the chain), ownership is
 left as-is — there is no non-root user to hand it back to.
+
+If the chown itself fails, rastro prints a warning to stderr and preserves
+the run's real exit code. Your results are still complete and readable as
+root; only their ownership is wrong.
 
 ## `result.json`
 

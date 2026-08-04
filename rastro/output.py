@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from pathlib import Path
 
 _UNSAFE_NAME = re.compile(r"[^a-zA-Z0-9._-]+")
@@ -20,15 +21,17 @@ def _safe_target_name(target: str) -> str:
 
 
 def resolve_output_dir(target: str, explicit: str | None, now: str) -> Path:
-    """--output wins; otherwise ./rastro-<target>-<timestamp>, falling back to the
-    platform data dir when the working directory is not writable."""
+    """--output wins; otherwise ./rastro-<target>-<timestamp>.
+
+    There is no not-writable fallback. rastro only ever runs as root, so a
+    writability check on the working directory is always true — the fallback
+    branch was unreachable, and the platform data dir it pointed at would have
+    left a root-owned ~/.local/share/rastro/ behind. If the directory genuinely
+    cannot be created, cli reports the OSError and exits.
+    """
     if explicit:
         return Path(explicit).expanduser()
-    name = f"rastro-{_safe_target_name(target)}-{now}"
-    cwd = Path.cwd()
-    if os.access(cwd, os.W_OK):
-        return cwd / name
-    return invoking_user_home() / ".local" / "share" / "rastro" / name
+    return Path.cwd() / f"rastro-{_safe_target_name(target)}-{now}"
 
 
 def create_output_dir(path: Path) -> Path:
@@ -41,30 +44,38 @@ def create_output_dir(path: Path) -> Path:
     return path
 
 
-def invoking_user_home() -> Path:
-    """Home of the human who ran sudo, not /root — otherwise their config silently
-    stops applying the moment they elevate."""
-    user = os.environ.get("SUDO_USER")
-    if user:
-        return Path(os.path.expanduser(f"~{user}"))
-    return Path.home()
-
-
 def drop_ownership(path: Path) -> None:
     """Hand the output tree back to the human who ran sudo.
 
     follow_symlinks=False is load-bearing: a recursive chown that follows symlinks
     is a privilege-escalation primitive (a link to /etc/shadow would be handed to
     an unprivileged user).
+
+    This runs from cli.main's `finally`, so it must never raise: a chown failure
+    here would discard the real return code and replace it with a traceback,
+    losing results that were already written. Failures are reported to stderr and
+    otherwise ignored.
     """
     raw_uid = os.environ.get("SUDO_UID")
     if raw_uid is None:
         return  # real root login — nobody to hand back to
-    uid = int(raw_uid)
-    gid = int(os.environ.get("SUDO_GID", raw_uid))
+    try:
+        uid = int(raw_uid)
+        gid = int(os.environ.get("SUDO_GID", raw_uid))
+    except ValueError:
+        print(f"cannot hand back ownership: bad SUDO_UID/SUDO_GID: {raw_uid!r}",
+              file=sys.stderr)
+        return
     if not path.exists():
         return
-    os.chown(path, uid, gid, follow_symlinks=False)
-    for root, dirs, files in os.walk(path):
-        for name in dirs + files:
-            os.chown(os.path.join(root, name), uid, gid, follow_symlinks=False)
+    try:
+        os.chown(path, uid, gid, follow_symlinks=False)
+        for root, dirs, files in os.walk(path):
+            for name in dirs + files:
+                os.chown(os.path.join(root, name), uid, gid, follow_symlinks=False)
+    except OSError as error:
+        print(
+            f"could not hand back ownership of {path} to {uid}:{gid}: {error}\n"
+            f"results are intact but may still be root-owned",
+            file=sys.stderr,
+        )

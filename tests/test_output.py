@@ -3,12 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from rastro.output import (
-    create_output_dir,
-    drop_ownership,
-    invoking_user_home,
-    resolve_output_dir,
-)
+from rastro.output import create_output_dir, drop_ownership, resolve_output_dir
 
 
 def test_explicit_output_wins(tmp_path: Path):
@@ -60,9 +55,38 @@ def test_drop_ownership_does_not_follow_symlinks(tmp_path: Path, monkeypatch):
     assert outside.stat().st_uid == original_uid
 
 
-def test_invoking_user_home_prefers_sudo_user(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("SUDO_USER", "someuser")
-    monkeypatch.setattr(
-        "rastro.output.os.path.expanduser", lambda p: str(tmp_path / "someuser")
-    )
-    assert invoking_user_home() == tmp_path / "someuser"
+def test_default_output_dir_is_always_under_cwd(tmp_path: Path, monkeypatch):
+    # There is no not-writable fallback: rastro only runs as root, so the old
+    # os.access(cwd, W_OK) check was always true and its ~/.local/share branch was
+    # dead code that would have left a root-owned directory in the user's home.
+    monkeypatch.chdir(tmp_path)
+    got = resolve_output_dir("10.0.0.1", None, now="20260804-120000")
+    assert got.parent == tmp_path
+
+
+def test_create_output_dir_refuses_a_pre_existing_directory(tmp_path: Path):
+    # This guard is what makes the later recursive root chown safe: we must never
+    # chown a tree we did not create ourselves.
+    existing = tmp_path / "out"
+    existing.mkdir()
+    with pytest.raises(FileExistsError):
+        create_output_dir(existing)
+
+
+def test_drop_ownership_reports_chown_failure_without_raising(tmp_path, monkeypatch, capsys):
+    # It runs in main's finally; raising there would replace the real return code
+    # with a traceback and lose results that are already on disk.
+    monkeypatch.setenv("SUDO_UID", "1000")
+    monkeypatch.setenv("SUDO_GID", "1000")
+
+    def boom(*args, **kwargs):
+        raise PermissionError("read-only file system")
+
+    monkeypatch.setattr("rastro.output.os.chown", boom, raising=False)
+    (tmp_path / "f.txt").write_text("x")
+
+    drop_ownership(tmp_path)  # must not raise
+
+    err = capsys.readouterr().err
+    assert "could not hand back ownership" in err
+    assert "results are intact" in err
