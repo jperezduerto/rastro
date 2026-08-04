@@ -1,7 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from rastro.model import Context, Host, Port, Service
-from rastro.stages.plan import build_plan, render_template
+from rastro.stages.plan import TemplateError, build_plan, render_template
 
 RULES = {
     "version": 1,
@@ -64,6 +66,59 @@ def test_ports_without_a_service_produce_nothing(tmp_path):
     host.ports = [Port(number=64999)]
     plan, _ = build_plan(host, _ctx(tmp_path, {}))
     assert plan == []
+
+
+def test_tls_port_renders_https_and_plain_port_renders_http(tmp_path):
+    # 443 probed over plaintext http:// is an unusable request that also drags the
+    # whole run down to EXIT_PARTIAL on the nonzero curl exit.
+    https = render_template(
+        "curl {scheme}://{target}:{port}/", target="10.0.0.5", port=443, output_dir=tmp_path
+    )
+    http = render_template(
+        "curl {scheme}://{target}:{port}/", target="10.0.0.5", port=80, output_dir=tmp_path
+    )
+    assert https.startswith("curl https://")
+    assert http.startswith("curl http://")
+
+
+def test_unknown_placeholder_raises_template_error(tmp_path):
+    with pytest.raises(TemplateError):
+        render_template("gobuster -w {wordlist}", target="t", port=80, output_dir=tmp_path)
+
+
+def test_stray_brace_in_a_command_raises_template_error(tmp_path):
+    # awk/curl format strings are the realistic version of this.
+    with pytest.raises(TemplateError):
+        render_template("awk '{print $1}'", target="t", port=80, output_dir=tmp_path)
+
+
+def test_unrenderable_template_is_skipped_and_does_not_abort_the_plan(tmp_path):
+    # build_plan runs mid-scan; raising here would discard the sweep and -sV results.
+    rules = {
+        "version": 1,
+        "services": {
+            "smb": {
+                "ports": [445],
+                "enum": [
+                    {"id": "bad", "tool": "netexec", "command": "nxc {wordlist} {target}",
+                     "timeout": 60, "requires_confidence": "guess"},
+                    {"id": "good", "tool": "netexec", "command": "nxc smb {target} --shares",
+                     "timeout": 60, "requires_confidence": "guess"},
+                ],
+            }
+        },
+    }
+    host = Host(target="10.0.0.5")
+    host.ports = [Port(number=445, service=Service(name="smb", confidence="guess"))]
+    ctx = Context(target="10.0.0.5", output_dir=tmp_path, rules=rules,
+                  tools={"netexec": "/usr/bin/nxc"})
+
+    plan, skipped = build_plan(host, ctx)          # must not raise
+
+    assert [p.entry_id for p in plan] == ["good"]  # the rest of the plan survives
+    bad = [s for s in skipped if s["tool"] == "netexec"][0]
+    assert "wordlist" in bad["reason"]                       # names the bad placeholder
+    assert bad["would_have_run"] == ["nxc {wordlist} {target}"]  # and the raw template
 
 
 def test_slug_is_unique_per_port_and_entry(tmp_path):

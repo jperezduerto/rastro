@@ -9,12 +9,12 @@ services:
     enum:
       - id: http-headers
         tool: curl
-        command: "curl -sSik --max-time 15 http://{target}:{port}/"
+        command: "curl -sSik --max-time 15 {scheme}://{target}:{port}/"
         timeout: 30
         requires_confidence: guess
       - id: http-dirs
         tool: gobuster
-        command: "gobuster dir -q -u http://{target}:{port}/ -w /usr/share/wordlists/dirb/common.txt -t 20"
+        command: "gobuster dir -q -k -u {scheme}://{target}:{port}/ -w /usr/share/wordlists/dirb/common.txt -t 20"
         timeout: 300
         requires_confidence: confirmed
   smb:

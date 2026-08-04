@@ -79,7 +79,7 @@ result can always be distinguished from an under-confident one.
 
 ## Placeholders
 
-Command templates are Python `str.format()` templates with three available
+Command templates are Python `str.format()` templates with four available
 placeholders:
 
 | Placeholder | Value |
@@ -87,12 +87,29 @@ placeholders:
 | `{target}` | The scan target (hostname or IP as given on the command line) |
 | `{port}` | The port number this enumeration step is running against |
 | `{output_dir}` | The run's output directory |
+| `{scheme}` | `https` when `{port}` is a TLS port, otherwise `http` |
 
 **All substituted values are shell-quoted** (`shlex.quote`) before
 substitution — `{target}` and `{output_dir}` in particular can be
 influenced by command-line input or an alternate rules file, and these
 commands run as root. Do not add your own quoting around a placeholder; it
 is applied for you.
+
+`{scheme}` exists so one HTTP rule covers both plaintext and TLS ports:
+write `{scheme}://{target}:{port}/` rather than hardcoding `http://`, which
+would send an unusable plaintext request to every HTTPS port. The TLS set is
+`plan.TLS_PORTS` — `443, 5986, 8443, 8834, 9443, 12443`. Because these
+certificates are usually self-signed, pair `{scheme}` with your tool's
+"ignore certificate errors" flag (`curl -k`, `gobuster -k`).
+
+### Braces that are not placeholders
+
+Any other brace in a `command` is an error — `str.format()` cannot tell a
+typo (`{wordlist}`) from a shell construct (`awk '{print $1}'`, `curl -w
+'%{http_code}'`). rastro does not abort the scan over this: the entry is
+routed into `skipped` with a reason naming the offending placeholder and the
+raw template, and the rest of the plan runs. If you need literal braces in a
+command, wrap the tool invocation in a small script and call that instead.
 
 ## Worked example: adding a new service
 

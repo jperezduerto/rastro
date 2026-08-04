@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_MISSING_TOOL
 
     try:
-        service_rules = load_services(args.rules)
+        service_rules = load_services(Path(args.rules) if args.rules else None)
         tool_rules = load_tools()
     except RulesError as exc:
         print(f"rules error: {exc}", file=sys.stderr)

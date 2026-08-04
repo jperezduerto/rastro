@@ -55,6 +55,48 @@ def test_dry_run_writes_no_output_dir_and_prints_commands(tmp_path, monkeypatch,
     assert "nmap" in capsys.readouterr().out
 
 
+_MINIMAL_RULES = """\
+version: 1
+services:
+  smb:
+    ports: [445]
+    enum:
+      - id: smb-shares
+        tool: netexec
+        command: "nxc smb {target} --shares"
+        timeout: 60
+        requires_confidence: guess
+"""
+
+
+def test_rules_flag_accepts_a_path_and_the_run_succeeds(tmp_path, monkeypatch, capsys):
+    # --rules is a str from argparse; load_services takes a Path. Passing it through
+    # raw made a documented flag fail with AttributeError on every invocation.
+    monkeypatch.chdir(tmp_path)
+    rules_file = tmp_path / "custom.yaml"
+    rules_file.write_text(_MINIMAL_RULES)
+    monkeypatch.setattr(cli, "resolve_target", lambda t: "10.0.0.5")
+    monkeypatch.setattr(cli.tools, "detect", lambda rules: {"nmap": "/usr/bin/nmap"})
+    for stage in (cli.discover, cli.identify, cli.enumerate_stage, cli.classify):
+        monkeypatch.setattr(stage, "run", lambda host, ctx: host)
+
+    code = cli.main(["10.0.0.5", "--rules", str(rules_file), "--no-install"])
+
+    assert code == cli.EXIT_OK
+    result = json.loads(next(tmp_path.glob("rastro-*/result.json")).read_text())
+    assert result["target"] == "10.0.0.5"
+
+
+def test_rules_flag_with_a_missing_file_errors_cleanly(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "resolve_target", lambda t: "10.0.0.5")
+    code = cli.main(["10.0.0.5", "--rules", str(tmp_path / "nope.yaml")])
+    assert code == cli.EXIT_MISSING_TOOL
+    err = capsys.readouterr().err
+    assert "rules error" in err and "not found" in err
+    assert "Traceback" not in err
+
+
 def test_missing_required_tool_exits_one(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "resolve_target", lambda t: "10.0.0.5")
