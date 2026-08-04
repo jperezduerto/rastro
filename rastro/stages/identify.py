@@ -10,7 +10,7 @@ import shlex
 from typing import Any
 
 from ..model import Context, Host, Service
-from ..runner import run_command
+from ..runner import CommandSpec, run_command, run_many
 
 # Ports that are almost always HTTP even though they are not the canonical 80/443.
 HTTP_HINT_PORTS: set[int] = {
@@ -120,6 +120,21 @@ def parse_nmap_service(text: str, port: int) -> tuple[str, str]:
     return (banner, "")
 
 
+def nse_for_service(service_name: str, services: dict[str, Any]) -> str:
+    """The NSE bundle a service declares in `detect.nse`, or '' when it declares none."""
+    spec = (services.get("services") or {}).get(service_name) or {}
+    return str((spec.get("detect") or {}).get("nse") or "")
+
+
+def nse_probe_command(target: str, port: int, nse: str) -> str:
+    """Per-port NSE probe. This is what actually produces most findings — a plain
+    -sV reports versions but never the vuln/enum signal the signatures match."""
+    return (
+        f"nmap -Pn --host-timeout 120s -p{int(port)} "
+        f"--script {shlex.quote(nse)} {shlex.quote(str(target))}"
+    )
+
+
 def version_probe_command(target: str, ports: list[int]) -> str:
     """One -sV pass across every open port. This is what earns `confirmed`.
 
@@ -184,4 +199,33 @@ def run(host: Host, ctx: Context) -> Host:
         port.service.product = product
         port.service.version = version
         port.service.confidence = "confirmed"
+
+    # Pass 3: the NSE bundle each service declares in `detect.nse`. Run after the
+    # version probe so the bundle is chosen from the *resolved* service name — a
+    # service on a non-standard port gets the right scripts, which choosing from
+    # the port map alone could never do.
+    specs: list[CommandSpec] = []
+    ports_by_slug: dict[str, Any] = {}
+    for port in host.ports:
+        if port.service is None:
+            continue
+        nse = nse_for_service(port.service.name, ctx.rules)
+        if not nse:
+            continue
+        slug = f"{port.number}-nse"
+        ports_by_slug[slug] = port
+        specs.append(CommandSpec(
+            command=nse_probe_command(ctx.target, port.number, nse),
+            tool="nmap",
+            timeout=max(ctx.command_timeout, 120),
+            slug=slug,
+        ))
+
+    if specs:
+        for artifact in run_many(
+            specs, max_parallel=ctx.max_parallel, output_dir=ctx.output_dir
+        ):
+            port = ports_by_slug.get(artifact.slug_source)
+            if port is not None:
+                port.artifacts.append(artifact)
     return host

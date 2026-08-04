@@ -1,8 +1,19 @@
+import pytest
+
+import rastro.stages.identify as identify_module
 from rastro.model import Context, Host, Port
 from rastro.rules.loader import load_services
 from rastro.stages.identify import HTTP_HINT_PORTS, run, svc_for_port
 
 RULES = load_services()
+
+
+@pytest.fixture(autouse=True)
+def _no_nse_subprocesses(monkeypatch):
+    """Pass 3 shells out to nmap for every service declaring `detect.nse`.
+    Without this the suite would spawn real scans; tests that care about the NSE
+    pass override run_many themselves."""
+    monkeypatch.setattr(identify_module, "run_many", lambda specs, **kw: [])
 
 
 def test_known_port_maps_to_service():
@@ -202,3 +213,83 @@ def test_port_map_still_wins_over_the_nmap_column(tmp_path, monkeypatch):
     host.ports = [Port(number=445)]
     result = run(host, Context(target="10.0.0.5", output_dir=tmp_path, rules=RULES))
     assert result.ports[0].service.name == "smb"
+
+
+def test_nse_bundle_is_run_for_the_resolved_service(tmp_path, monkeypatch):
+    # detect.nse was dead config: the scripts that produce most findings never ran,
+    # so smb-signing-disabled could not fire even against a vulnerable host.
+    from rastro.model import Artifact
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "identify.txt").write_text("445/tcp open  netbios-ssn Samba smbd 4.6.2\n")
+    monkeypatch.setattr(
+        identify_module, "run_command",
+        lambda *a, **k: Artifact(tool="nmap", command="nmap -sV",
+                                 stdout_path="raw/identify.txt"),
+    )
+    issued: list = []
+
+    def fake_run_many(specs, **kw):
+        issued.extend(specs)
+        return [Artifact(tool="nmap", command=s.command, stdout_path="",
+                         slug_source=s.slug) for s in specs]
+
+    monkeypatch.setattr(identify_module, "run_many", fake_run_many)
+
+    host = Host(target="10.0.0.5")
+    host.ports = [Port(number=445)]
+    result = run(host, Context(target="10.0.0.5", output_dir=tmp_path, rules=RULES))
+
+    assert len(issued) == 1
+    assert "--script" in issued[0].command
+    assert "smb2-security-mode" in issued[0].command
+    assert "-p445" in issued[0].command
+    # The artifact must attach to the port so classify can scan it for findings.
+    assert len(result.ports[0].artifacts) == 1
+
+
+def test_nse_bundle_follows_the_corrected_service_on_a_nonstandard_port(tmp_path, monkeypatch):
+    # The bundle is chosen after -sV, so SSH on 10022 gets the ssh scripts —
+    # something the port map alone could never do.
+    from rastro.model import Artifact
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "identify.txt").write_text("10022/tcp open  ssh  OpenSSH 10.3p1\n")
+    monkeypatch.setattr(
+        identify_module, "run_command",
+        lambda *a, **k: Artifact(tool="nmap", command="nmap -sV",
+                                 stdout_path="raw/identify.txt"),
+    )
+    issued: list = []
+    monkeypatch.setattr(identify_module, "run_many",
+                        lambda specs, **kw: (issued.extend(specs), [])[1])
+
+    host = Host(target="10.0.0.5")
+    host.ports = [Port(number=10022)]
+    run(host, Context(target="10.0.0.5", output_dir=tmp_path, rules=RULES))
+
+    assert len(issued) == 1
+    assert "ssh-hostkey" in issued[0].command
+
+
+def test_service_without_an_nse_bundle_issues_no_probe(tmp_path, monkeypatch):
+    from rastro.model import Artifact
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "identify.txt").write_text("9999/tcp open  unknown\n")
+    monkeypatch.setattr(
+        identify_module, "run_command",
+        lambda *a, **k: Artifact(tool="nmap", command="nmap -sV",
+                                 stdout_path="raw/identify.txt"),
+    )
+    issued: list = []
+    monkeypatch.setattr(identify_module, "run_many",
+                        lambda specs, **kw: (issued.extend(specs), [])[1])
+
+    host = Host(target="10.0.0.5")
+    host.ports = [Port(number=9999)]
+    run(host, Context(target="10.0.0.5", output_dir=tmp_path, rules=RULES))
+    assert issued == []
