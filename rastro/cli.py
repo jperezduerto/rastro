@@ -48,6 +48,15 @@ class UnreachableTarget(Exception):
     """The target could not be resolved."""
 
 
+# What each stage is actually doing, shown beside its name in the live view.
+_STAGE_DETAIL = {
+    "discover": "sweeping for open ports",
+    "identify": "fingerprinting services",
+    "enumerate": "running per-service enumeration",
+    "classify": "parsing output into findings",
+}
+
+
 ELEVATED_ENV = "RASTRO_ELEVATED"
 
 
@@ -132,6 +141,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-install", action="store_true", help="never install missing tools")
     parser.add_argument("--json", action="store_true", help="also write result JSON to stdout")
     parser.add_argument("--quiet", action="store_true", help="suppress the live view")
+    parser.add_argument("--no-color", action="store_true",
+                        help="disable coloured output (NO_COLOR is also honoured)")
     return parser
 
 
@@ -213,13 +224,16 @@ def main(argv: list[str] | None = None) -> int:
     # document and stays pipeable into jq.
     print(output_dir, file=sys.stderr if args.json else sys.stdout)
 
+    reporter = live.Reporter(quiet=args.quiet, color=False if args.no_color else None)
+    reporter.banner(args.target, output_dir)
+
     try:
         if not args.no_install:
             manager = deps.detect_manager()
             packages, skipped = deps.plan_installs(detected, tool_rules, manager)
             host.skipped.extend(skipped)
             if packages and manager:
-                live.emit(f"installing: {' '.join(packages)}", quiet=args.quiet)
+                reporter.note(f"installing: {' '.join(packages)}")
                 # Record the install command itself: when a scan behaves differently
                 # than it did last week, this is what answers "what changed".
                 host.artifacts.append(deps.install(manager, packages, output_dir=output_dir))
@@ -245,15 +259,18 @@ def main(argv: list[str] | None = None) -> int:
 
         ctx = Context(
             target=args.target, output_dir=output_dir, rules=service_rules, tools=detected,
-            no_install=args.no_install,
+            no_install=args.no_install, reporter=reporter,
         )
         interrupted = False
         try:
             for stage in (discover, identify, enumerate_stage, classify):
-                live.emit(f"stage: {stage.__name__.rsplit('.', 1)[-1]}", quiet=args.quiet)
+                name = stage.__name__.rsplit(".", 1)[-1]
+                reporter.stage(name, _STAGE_DETAIL.get(name, ""))
                 host = stage.run(host, ctx)
+                if name == "discover":
+                    reporter.ports([port.number for port in host.ports])
         except KeyboardInterrupt:
-            live.emit("interrupted - writing partial results", quiet=args.quiet)
+            reporter.warn("interrupted - writing partial results")
             interrupted = True
 
         host.finished_at = datetime.now(timezone.utc).isoformat()
@@ -264,6 +281,8 @@ def main(argv: list[str] | None = None) -> int:
         (output_dir / "report.md").chmod(0o600)
         if args.json:
             print(payload)
+
+        reporter.summary(host)
 
         failed = [a for a in list(host.artifacts) + [x for p in host.ports for x in p.artifacts]
                   if a.exit_code != 0]

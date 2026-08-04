@@ -65,6 +65,7 @@ def run(host: Host, ctx: Context) -> Host:
         timeout=max(ctx.command_timeout, 300),
         output_dir=ctx.output_dir,
         slug="discover",
+        reporter=ctx.reporter,
     )
     host.artifacts.append(artifact)
 

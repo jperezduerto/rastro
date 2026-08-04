@@ -27,6 +27,7 @@ def run(host: Host, ctx: Context) -> Host:
         [planned.spec for planned in plan],
         max_parallel=ctx.max_parallel,
         output_dir=ctx.output_dir,
+        reporter=ctx.reporter,
     )
 
     by_slug = {planned.spec.slug: planned.port for planned in plan}

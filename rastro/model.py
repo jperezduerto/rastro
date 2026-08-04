@@ -110,5 +110,8 @@ class Context:
     tools: dict[str, str | None] = field(default_factory=dict)
     dry_run: bool = False
     no_install: bool = False
+    # Live reporter (rastro.render.live.Reporter). Optional so every stage stays
+    # testable without a terminal; None means "report nothing".
+    reporter: Any = None
     max_parallel: int = 30
     command_timeout: int = 120

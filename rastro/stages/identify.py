@@ -169,6 +169,7 @@ def run(host: Host, ctx: Context) -> Host:
         timeout=max(ctx.command_timeout, 300),
         output_dir=ctx.output_dir,
         slug="identify",
+        reporter=ctx.reporter,
     )
     # Run-level artifact: the probe covers the whole host, not one port.
     # Recorded unconditionally so a failed probe still leaves evidence it ran.
@@ -223,7 +224,8 @@ def run(host: Host, ctx: Context) -> Host:
 
     if specs:
         for artifact in run_many(
-            specs, max_parallel=ctx.max_parallel, output_dir=ctx.output_dir
+            specs, max_parallel=ctx.max_parallel, output_dir=ctx.output_dir,
+            reporter=ctx.reporter,
         ):
             port = ports_by_slug.get(artifact.slug_source)
             if port is not None:

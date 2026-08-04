@@ -34,8 +34,29 @@ def _safe_slug(slug: str) -> str:
     return cleaned or "artifact"
 
 
+def _report_start(reporter, command: str) -> None:
+    if reporter is not None:
+        reporter.command(command)
+
+
+def _report_done(reporter, artifact: Artifact, output_dir: Path) -> None:
+    """Show the outcome and a short excerpt, so the operator sees findings land."""
+    if reporter is None:
+        return
+    excerpt: list[str] = []
+    if artifact.stdout_path:
+        try:
+            from .render.live import interesting_lines
+            text = (output_dir / artifact.stdout_path).read_text(errors="replace")
+            excerpt = interesting_lines(text)
+        except OSError:
+            excerpt = []
+    reporter.result(artifact.exit_code, artifact.duration_s, artifact.timed_out, excerpt)
+
+
 def run_command(
-    command: str, *, tool: str, timeout: int, output_dir: Path, slug: str
+    command: str, *, tool: str, timeout: int, output_dir: Path, slug: str,
+    reporter: object | None = None,
 ) -> Artifact:
     """Run one command, capture combined output to raw/<slug>.txt, never raise."""
     raw_dir = output_dir / "raw"
@@ -43,6 +64,7 @@ def run_command(
     relative = f"raw/{_safe_slug(slug)}.txt"
     target_file = output_dir / relative
 
+    _report_start(reporter, command)
     started = time.monotonic()
     timed_out = False
     try:
@@ -75,7 +97,7 @@ def run_command(
             fh.write(body)
     except OSError as exc:
         # Never raise: a write failure is a recorded outcome like any other.
-        return Artifact(
+        failed = Artifact(
             tool=tool,
             command=command,
             exit_code=exit_code if exit_code != 0 else 1,
@@ -85,8 +107,10 @@ def run_command(
             slug_source=slug,
             parsed={"error": f"failed to write output: {exc}"},
         )
+        _report_done(reporter, failed, output_dir)
+        return failed
 
-    return Artifact(
+    artifact = Artifact(
         tool=tool,
         command=command,
         exit_code=exit_code,
@@ -95,10 +119,13 @@ def run_command(
         stdout_path=relative,
         slug_source=slug,
     )
+    _report_done(reporter, artifact, output_dir)
+    return artifact
 
 
 def run_many(
-    specs: list[CommandSpec], *, max_parallel: int, output_dir: Path
+    specs: list[CommandSpec], *, max_parallel: int, output_dir: Path,
+    reporter: object | None = None,
 ) -> list[Artifact]:
     """Run specs concurrently with a bounded pool. One failure never sinks the rest."""
     if not specs:
@@ -113,6 +140,7 @@ def run_many(
                 timeout=spec.timeout,
                 output_dir=output_dir,
                 slug=spec.slug,
+                reporter=reporter,
             ): spec
             for spec in specs
         }
