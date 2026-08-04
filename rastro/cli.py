@@ -137,7 +137,18 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_OK
 
     now = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    output_dir = create_output_dir(resolve_output_dir(args.target, args.output, now))
+    try:
+        output_dir = create_output_dir(resolve_output_dir(args.target, args.output, now))
+    except FileExistsError:
+        print(
+            f"output directory already exists; refusing to reuse it: "
+            f"{resolve_output_dir(args.target, args.output, now)}",
+            file=sys.stderr,
+        )
+        return EXIT_MISSING_TOOL
+    except OSError as error:
+        print(f"cannot create output directory: {error}", file=sys.stderr)
+        return EXIT_MISSING_TOOL
     print(output_dir)  # first line, always: never make the user hunt for results
 
     try:
@@ -147,12 +158,23 @@ def main(argv: list[str] | None = None) -> int:
             host.skipped.extend(skipped)
             if packages and manager:
                 live.emit(f"installing: {' '.join(packages)}", quiet=args.quiet)
-                deps.install(manager, packages, output_dir=output_dir)
+                # Record the install command itself: when a scan behaves differently
+                # than it did last week, this is what answers "what changed".
+                host.artifacts.append(deps.install(manager, packages, output_dir=output_dir))
+                before = detected
                 detected = tools.detect(tool_rules)
                 host.tools = detected
-                host.installed.extend(
-                    {"tool": p, "package": p, "manager": manager, "at": now} for p in packages
-                )
+                installed_at = datetime.now(timezone.utc).isoformat()
+                for name, path in detected.items():
+                    # Only claim what actually appeared — deps.install never raises,
+                    # so a failed or partial install must not be reported as success.
+                    if not path or before.get(name):
+                        continue
+                    package = (tool_rules.get(name, {}).get("packages") or {}).get(manager, name)
+                    host.installed.append({
+                        "tool": name, "package": package,
+                        "manager": manager, "at": installed_at,
+                    })
 
         still_missing = deps.missing_required(detected, tool_rules)
         if still_missing:
@@ -163,9 +185,14 @@ def main(argv: list[str] | None = None) -> int:
             target=args.target, output_dir=output_dir, rules=service_rules, tools=detected,
             no_install=args.no_install,
         )
-        for stage in (discover, identify, enumerate_stage, classify):
-            live.emit(f"stage: {stage.__name__.rsplit('.', 1)[-1]}", quiet=args.quiet)
-            host = stage.run(host, ctx)
+        interrupted = False
+        try:
+            for stage in (discover, identify, enumerate_stage, classify):
+                live.emit(f"stage: {stage.__name__.rsplit('.', 1)[-1]}", quiet=args.quiet)
+                host = stage.run(host, ctx)
+        except KeyboardInterrupt:
+            live.emit("interrupted - writing partial results", quiet=args.quiet)
+            interrupted = True
 
         host.finished_at = datetime.now(timezone.utc).isoformat()
         payload = json.dumps(host.to_dict(), indent=2)
@@ -178,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
 
         failed = [a for a in list(host.artifacts) + [x for p in host.ports for x in p.artifacts]
                   if a.exit_code != 0]
-        return EXIT_PARTIAL if failed else EXIT_OK
+        return EXIT_PARTIAL if (interrupted or failed) else EXIT_OK
     finally:
         # Teardown always runs: a crashed or Ctrl-C'd scan still leaves artifacts,
         # and that is exactly when the user most wants to read them.
