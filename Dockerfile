@@ -12,9 +12,9 @@
 # the traffic and hide the real network.
 #
 # Results land in /out, the working directory — bind-mount a host directory
-# there to keep them. Files are written 0600 and the run directory 0700; inside
-# the container rastro runs as root and there is no SUDO_UID, so ownership is
-# left as root (the handback only applies under sudo on a normal host).
+# there to keep them. Files are written 0600 and the run directory 0700, and the
+# entrypoint hands ownership back to whoever owns the mounted /out, so the host
+# user can read their own results.
 FROM kalilinux/kali-rolling
 
 # Every tool rastro knows about, so a scan never touches a package manager.
@@ -40,7 +40,10 @@ COPY rastro ./rastro
 # container, so installing into the system interpreter is the right call.
 RUN pip install --no-cache-dir --break-system-packages .
 
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 WORKDIR /out
 
-ENTRYPOINT ["rastro"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["--help"]
