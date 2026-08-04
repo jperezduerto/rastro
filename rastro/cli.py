@@ -1,24 +1,196 @@
-"""Command-line entry point for rastro."""
+"""Command-line entry point: the only module that enforces root and owns exit codes."""
 from __future__ import annotations
 
 import argparse
+import json
+import os as _os
+import socket
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
-from . import __version__
+from . import __version__, deps, tools
+from .model import Context, Host
+from .output import create_output_dir, drop_ownership, resolve_output_dir
+from .render import live
+from .render import markdown
+from .rules.loader import RulesError, load_services, load_tools
+from .stages import classify, discover, enumerate as enumerate_stage, identify
+
+
+class _OsShim:
+    """Proxies to the real `os` module, except `geteuid` can be overridden locally.
+
+    `os.geteuid()` does not exist on Windows, but the euid gate below is
+    unit-tested on any platform via `monkeypatch.setattr(cli.os, "geteuid", ...)`,
+    which requires the attribute to already exist on `cli.os`. Setting it directly
+    on the real `os` module would leak into every other test in the session (it
+    would defeat `skipif(not hasattr(os, "geteuid"), ...)` guards elsewhere). This
+    shim keeps the override local to `cli.os` and changes nothing for real `os`.
+    """
+
+    def __getattr__(self, name):
+        return getattr(_os, name)
+
+
+os = _OsShim()
+if not hasattr(_os, "geteuid"):
+    os.geteuid = lambda: 0
+
+EXIT_OK = 0
+EXIT_MISSING_TOOL = 1
+EXIT_UNREACHABLE = 2
+EXIT_PARTIAL = 3
+
+RESULT_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "rastro result",
+    "type": "object",
+    "required": ["target", "ports", "findings", "buckets", "skipped"],
+    "properties": {
+        "target": {"type": "string"},
+        "resolved_ip": {"type": "string"},
+        "started_at": {"type": "string"},
+        "finished_at": {"type": "string"},
+        "tools": {"type": "object"},
+        "installed": {"type": "array", "items": {"type": "object"}},
+        "skipped": {"type": "array", "items": {"type": "object"}},
+        "buckets": {"type": "object"},
+        "ports": {"type": "array", "items": {"type": "object"}},
+        "artifacts": {"type": "array", "items": {"type": "object"}},
+        "findings": {"type": "array", "items": {"type": "object"}},
+    },
+}
+
+
+class UnreachableTarget(Exception):
+    """The target could not be resolved."""
+
+
+def resolve_target(target: str) -> str:
+    try:
+        return socket.gethostbyname(target)
+    except OSError as exc:
+        raise UnreachableTarget(target) from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="rastro")
-    parser.add_argument("--version", action="store_true", help="print version and exit")
+    parser = argparse.ArgumentParser(
+        prog="rastro",
+        description="Two-phase host reconnaissance: sweep, then per-service enumeration.",
+    )
+    parser.add_argument("target", nargs="?", help="host or IP to scan, or 'schema'")
+    parser.add_argument("--version", action="store_true")
+    parser.add_argument("--output", help="output directory")
+    parser.add_argument("--rules", help="alternate services.yaml")
+    parser.add_argument("--dry-run", action="store_true", help="print the plan, touch nothing")
+    parser.add_argument("--no-install", action="store_true", help="never install missing tools")
+    parser.add_argument("--json", action="store_true", help="also write result JSON to stdout")
+    parser.add_argument("--quiet", action="store_true", help="suppress the live view")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
     if args.version:
         print(f"rastro {__version__}")
-        return 0
-    return 0
+        return EXIT_OK
+    if args.target == "schema":
+        print(json.dumps(RESULT_SCHEMA, indent=2))
+        return EXIT_OK
+    if not args.target:
+        build_parser().print_help()
+        return EXIT_OK
+
+    # Root is required: -sS, OS fingerprinting, UDP and raw sockets all need it.
+    # Refuse rather than re-exec under sudo — self-elevation breaks without a TTY.
+    if os.geteuid() != 0:
+        print(f"rastro must run as root. Run: sudo rastro {args.target}", file=sys.stderr)
+        return EXIT_MISSING_TOOL
+
+    try:
+        service_rules = load_services(args.rules)
+        tool_rules = load_tools()
+    except RulesError as exc:
+        print(f"rules error: {exc}", file=sys.stderr)
+        return EXIT_MISSING_TOOL
+
+    try:
+        resolved = resolve_target(args.target)
+    except UnreachableTarget:
+        print(f"cannot resolve target: {args.target}", file=sys.stderr)
+        return EXIT_UNREACHABLE
+
+    detected = tools.detect(tool_rules)
+    host = Host(
+        target=args.target,
+        resolved_ip=resolved,
+        started_at=datetime.now(timezone.utc).isoformat(),
+        tools=detected,
+    )
+
+    if args.dry_run:
+        # No output directory is created: --dry-run must leave the filesystem alone.
+        ctx = Context(
+            target=args.target, output_dir=Path.cwd(), rules=service_rules,
+            tools=detected, dry_run=True,
+        )
+        host = discover.run(host, ctx)
+        host = identify.run(host, ctx)
+        host = enumerate_stage.run(host, ctx)
+        for entry in host.skipped:
+            for command in entry.get("would_have_run", []):
+                print(command)
+        return EXIT_OK
+
+    now = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    output_dir = create_output_dir(resolve_output_dir(args.target, args.output, now))
+    print(output_dir)  # first line, always: never make the user hunt for results
+
+    try:
+        if not args.no_install:
+            manager = deps.detect_manager()
+            packages, skipped = deps.plan_installs(detected, tool_rules, manager)
+            host.skipped.extend(skipped)
+            if packages and manager:
+                live.emit(f"installing: {' '.join(packages)}", quiet=args.quiet)
+                deps.install(manager, packages, output_dir=output_dir)
+                detected = tools.detect(tool_rules)
+                host.tools = detected
+                host.installed.extend(
+                    {"tool": p, "package": p, "manager": manager, "at": now} for p in packages
+                )
+
+        still_missing = deps.missing_required(detected, tool_rules)
+        if still_missing:
+            print(f"missing required tool(s): {', '.join(still_missing)}", file=sys.stderr)
+            return EXIT_MISSING_TOOL
+
+        ctx = Context(
+            target=args.target, output_dir=output_dir, rules=service_rules, tools=detected,
+            no_install=args.no_install,
+        )
+        for stage in (discover, identify, enumerate_stage, classify):
+            live.emit(f"stage: {stage.__name__.rsplit('.', 1)[-1]}", quiet=args.quiet)
+            host = stage.run(host, ctx)
+
+        host.finished_at = datetime.now(timezone.utc).isoformat()
+        payload = json.dumps(host.to_dict(), indent=2)
+        (output_dir / "result.json").write_text(payload)
+        (output_dir / "result.json").chmod(0o600)
+        (output_dir / "report.md").write_text(markdown.render(host))
+        (output_dir / "report.md").chmod(0o600)
+        if args.json:
+            print(payload)
+
+        failed = [a for a in list(host.artifacts) + [x for p in host.ports for x in p.artifacts]
+                  if a.exit_code != 0]
+        return EXIT_PARTIAL if failed else EXIT_OK
+    finally:
+        # Teardown always runs: a crashed or Ctrl-C'd scan still leaves artifacts,
+        # and that is exactly when the user most wants to read them.
+        drop_ownership(output_dir)
 
 
 def entrypoint() -> None:
