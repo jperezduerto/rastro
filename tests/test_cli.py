@@ -46,13 +46,28 @@ def _raise_unreachable(target):
     raise cli.UnreachableTarget(target)
 
 
-def test_dry_run_writes_no_output_dir_and_prints_commands(tmp_path, monkeypatch, capsys):
+def test_dry_run_writes_no_output_dir_and_falls_back_to_nmap(tmp_path, monkeypatch, capsys):
+    # tools.detect must be pinned: without it the sweep tool depends on what happens
+    # to be installed on the machine running the tests, so this passed on a host with
+    # no rustscan and failed on Kali, which ships it.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "resolve_target", lambda t: "10.0.0.5")
+    monkeypatch.setattr(cli.tools, "detect",
+                        lambda rules: {"nmap": "/usr/bin/nmap", "rustscan": None})
     code = cli.main(["10.0.0.5", "--dry-run"])
     assert code == cli.EXIT_OK
     assert list(tmp_path.iterdir()) == []
     assert "nmap" in capsys.readouterr().out
+
+
+def test_dry_run_prefers_rustscan_when_it_is_installed(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "resolve_target", lambda t: "10.0.0.5")
+    monkeypatch.setattr(cli.tools, "detect",
+                        lambda rules: {"nmap": "/usr/bin/nmap",
+                                       "rustscan": "/usr/bin/rustscan"})
+    assert cli.main(["10.0.0.5", "--dry-run"]) == cli.EXIT_OK
+    assert "rustscan" in capsys.readouterr().out
 
 
 def test_dry_run_says_enumeration_is_planned_after_the_sweep(tmp_path, monkeypatch, capsys):
