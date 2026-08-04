@@ -30,6 +30,34 @@ pip install rastro-sec
 
 The installed command is `rastro`.
 
+On a Debian-family system where the Python install is externally managed
+(PEP 668), install into a virtualenv:
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate && pip install rastro-sec
+```
+
+### Docker
+
+The image ships every scanning tool preinstalled, so nothing is installed
+at scan time and rastro works on hosts that are not Kali:
+
+```bash
+docker build -t rastro .
+docker run --rm --net=host --cap-add=NET_RAW --cap-add=NET_ADMIN \
+    -v "$PWD:/out" rastro 10.0.0.5 --no-install
+```
+
+`--net=host` and `NET_RAW`/`NET_ADMIN` are required — the sweep is a SYN
+scan, which needs raw sockets, and container NAT would otherwise rewrite
+the traffic and hide the real network. Results land in the directory you
+mount at `/out`, owned by whoever owns that directory rather than by root.
+
+The image has no `rustscan` (it is not in the Kali repos), so the sweep
+uses the nmap fallback, which covers a fixed common-port list rather than
+all 65535. Pass `--output` or bind-mount a different directory to control
+where results go.
+
 ## Quickstart
 
 ```bash
