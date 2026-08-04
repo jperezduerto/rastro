@@ -145,8 +145,13 @@ optionally install) it:
 redis-cli:
   binaries: [redis-cli]
   required: false
-  packages: {apt: redis-tools, dnf: redis, pacman: redis, brew: redis}
+  packages: {apt: redis-tools, dnf: redis, pacman: redis}
 ```
+
+The supported manager keys are `apt`, `dnf`, and `pacman`. Homebrew is not
+supported — it refuses to run as root, and rastro has no non-root mode. A
+tool with no mapping for the detected manager is not an error: rastro records
+it in `skipped` with the reason, along with every `enum` step that needed it.
 
 That's it — no Python changes. The next scan will identify port 6379 as
 `redis`, and once nmap confirms it, run `redis-cli -h <target> -p 6379 info`
