@@ -31,6 +31,7 @@ class Artifact:
     timed_out: bool = False
     stdout_path: str = ""
     parsed: dict[str, Any] = field(default_factory=dict)
+    slug_source: str = ""
 
 
 @dataclass
