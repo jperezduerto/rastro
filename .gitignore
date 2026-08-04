@@ -2,3 +2,10 @@ __pycache__/
 *.pyc
 .venv/
 rastro-*/
+
+# Build output — a stray `git add -A` must never publish a wheel.
+dist/
+build/
+*.egg-info/
+
+.pytest_cache/

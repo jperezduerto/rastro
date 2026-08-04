@@ -16,19 +16,20 @@ from typing import Any
 from .model import Artifact
 from .runner import run_command
 
-# probe binary -> manager key, in preference order
+# probe binary -> manager key, in preference order.
+# Linux distro managers only. Homebrew is deliberately absent: it refuses to run
+# as root, and rastro has no non-root mode, so a brew entry could never install
+# anything — it would only produce package mappings that silently never apply.
 _MANAGERS: tuple[tuple[str, str], ...] = (
     ("apt-get", "apt"),
     ("dnf", "dnf"),
     ("pacman", "pacman"),
-    ("brew", "brew"),
 )
 
 _INSTALL_TEMPLATES: dict[str, str] = {
     "apt": "apt-get install -y {packages}",
     "dnf": "dnf install -y {packages}",
     "pacman": "pacman -S --noconfirm {packages}",
-    "brew": "brew install {packages}",
 }
 
 

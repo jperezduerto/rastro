@@ -1,21 +1,26 @@
 # tool -> package per manager. rastro installs missing tools automatically.
 # `required: true` means a missing tool is a hard stop (exit 1).
+# Managers are Linux distro managers only (apt, dnf, pacman); Homebrew refuses to
+# run as root and rastro has no non-root mode. A tool with no mapping for the
+# detected manager is reported in `skipped`, never silently dropped.
 nmap:
   binaries: [nmap]
   required: true
-  packages: {apt: nmap, dnf: nmap, pacman: nmap, brew: nmap}
+  packages: {apt: nmap, dnf: nmap, pacman: nmap}
 rustscan:
   binaries: [rustscan]
   required: false
-  packages: {brew: rustscan}
+  # Not packaged by any supported manager: install it manually if you want the
+  # faster sweep. Without it, discover falls back to an nmap SYN sweep.
+  packages: {}
 curl:
   binaries: [curl]
   required: false
-  packages: {apt: curl, dnf: curl, pacman: curl, brew: curl}
+  packages: {apt: curl, dnf: curl, pacman: curl}
 gobuster:
   binaries: [gobuster]
   required: false
-  packages: {apt: gobuster, dnf: gobuster, pacman: gobuster, brew: gobuster}
+  packages: {apt: gobuster, dnf: gobuster, pacman: gobuster}
 netexec:
   binaries: [nxc, netexec]
   required: false

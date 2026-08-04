@@ -3,8 +3,24 @@ from rastro import deps
 RULES = {
     "nmap": {"binaries": ["nmap"], "required": True, "packages": {"apt": "nmap"}},
     "gobuster": {"binaries": ["gobuster"], "required": False, "packages": {"apt": "gobuster"}},
-    "rustscan": {"binaries": ["rustscan"], "required": False, "packages": {"brew": "rustscan"}},
+    # No package mapping at all — rustscan is not packaged by any supported manager.
+    "rustscan": {"binaries": ["rustscan"], "required": False, "packages": {}},
 }
+
+
+def test_homebrew_is_not_a_supported_manager():
+    # brew refuses to run as root and rastro has no non-root mode, so a brew entry
+    # could only ever produce mappings that silently never install anything.
+    assert "brew" not in dict(deps._MANAGERS).values()
+    assert "brew" not in deps._INSTALL_TEMPLATES
+
+
+def test_no_shipped_tool_maps_to_an_unsupported_manager():
+    from rastro.rules.loader import load_tools
+
+    supported = set(deps._INSTALL_TEMPLATES)
+    for name, spec in load_tools().items():
+        assert set(spec["packages"]) <= supported, name
 
 
 def test_detect_manager_prefers_first_available(monkeypatch):
@@ -31,7 +47,7 @@ def test_install_command_quotes_package_names():
 def test_plan_installs_only_covers_missing_tools_with_a_package():
     detected = {"nmap": "/usr/bin/nmap", "gobuster": None, "rustscan": None}
     packages, skipped = deps.plan_installs(detected, RULES, "apt")
-    assert packages == ["gobuster"]                      # nmap present; rustscan has no apt package
+    assert packages == ["gobuster"]                      # nmap present; rustscan has no package at all
     assert [s["tool"] for s in skipped] == ["rustscan"]
     assert "apt" in skipped[0]["reason"]
 
